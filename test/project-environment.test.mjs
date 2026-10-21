@@ -56,6 +56,168 @@ test("relative preparation lock directories are rejected", () => {
   }), /preparationLockDirectory must be an absolute path/);
 });
 
+test("preparation admission requires an absolute executable and bounded request", () => {
+  for (const preparationAdmission of [{}, { amc: "amc", contract: "nix-eval", memoryBytes: 1 }, { amc: "/bin/amc", contract: "", memoryBytes: 1 }, { amc: "/bin/amc", contract: "nix-eval", memoryBytes: 0 }]) {
+    assert.throws(() => createProjectEnvironments({ roots: ["/workspace"], direnv: "/bin/direnv", nix: "/bin/nix", baseline: {}, preparationAdmission }), /preparationAdmission/);
+  }
+});
+
+// A fake AMC client speaking ready v2 and backpressure v1 on stderr. Each export
+// attempt follows the next entry of amc-plan.json; Nix catalog evaluation and
+// unplanned attempts enter and prove completion like a real client; `code`
+// replaces the payload with that workload exit.
+async function admissionFixture(t, plan = [], options = {}) {
+  const { projects, baseline } = await fixture(t);
+  const cwd = projects[0];
+  const amc = path.join(cwd, "amc-fixture");
+  await writeFile(path.join(cwd, "amc-plan.json"), JSON.stringify(plan));
+  await writeFile(amc, `#!${process.execPath}
+import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+import { spawn } from "node:child_process";
+const args = process.argv.slice(2);
+await appendFile("admission-args", JSON.stringify(args) + "\\n");
+const exports = (await readFile("admission-args", "utf8")).trim().split("\\n").filter(line => JSON.parse(line).includes("export")).length;
+const step = (args.includes("export") && JSON.parse(await readFile("amc-plan.json", "utf8"))[exports - 1]) || {};
+const token = args[args.indexOf("--ready-token") + 1];
+const frame = body => "\\x1e" + token + body + "\\x1f";
+let cancelled = false;
+process.on("SIGTERM", async () => { cancelled = true; await delay(100); await writeFile("admission-cleaned", "yes"); process.exit(143); });
+await delay(step.wait ?? 200);
+if (!cancelled) {
+  for (const body of step.before ?? []) process.stderr.write(frame(body));
+  if (step.enter === false) process.exit(step.exit ?? 0);
+  const entry = frame("");
+  process.stderr.write(entry.slice(0, 10));
+  await delay(10);
+  process.stderr.write(entry.slice(10));
+  // Split every proof frame across writes, as a pipe may deliver it.
+  const settle = async code => {
+    for (const body of step.after ?? [":complete:$code"]) {
+      const proof = frame(body.replace("$code", code));
+      process.stderr.write(proof.slice(0, -3));
+      await delay(5);
+      process.stderr.write(proof.slice(-3));
+    }
+    process.exit(step.exit ?? code ?? 1);
+  };
+  const payload = args.slice(args.indexOf("--") + 1);
+  if (step.code !== undefined) settle(step.code);
+  else spawn(payload[0], payload.slice(1), { stdio: "inherit" }).on("exit", settle);
+}
+`, { mode: 0o700 });
+  const events = [];
+  const environments = createProjectEnvironments({ roots: projects, baseline, direnv, nix,
+    system: process.arch === "arm64" ? "aarch64-linux" : "x86_64-linux", preparationTimeoutMs: 100,
+    preparationAdmission: { amc, contract: "nix-eval", memoryBytes: 1048576 },
+    onProgress: event => events.push(event), ...options });
+  const requests = async (phase = "export") => (await readFile(path.join(cwd, "admission-args"), "utf8")).trim().split("\n")
+    .map(line => JSON.parse(line)).filter(args => args.includes(phase));
+  return { cwd, amc, events, environments, requests };
+}
+
+test("native preparation queues beyond its execution deadline and settles on completion proof", integration, async (t) => {
+  const { cwd, events, environments, requests } = await admissionFixture(t);
+  assert.equal((await environments.resolve({ sessionID: "a", cwd })).env.PROJECT_TEST, "a:default");
+  assert.deepEqual((await environments.list(cwd)).shells, ["default", "docs"]);
+  for (const args of [...await requests("export"), ...await requests("eval")]) {
+    assert.deepEqual(args.slice(0, 9), ["admission", "exec", "--contract", "nix-eval", "--queue", "--max-ram-usage", "1048576", "--runtime-max-sec", args.includes("eval") ? "120" : "1"]);
+    assert.equal(args.includes("--timeout"), false, "no implicit queue deadline");
+    assert.match(args[args.indexOf("--ready-token") + 1], /^[a-z0-9-]{36}$/);
+  }
+  assert.deepEqual(events.filter(event => event.phase === "direnv export").map(event => event.status), ["waiting", "preparing", "ready"]);
+});
+
+test("native queued preparation cancellation awaits its owner and never enters", integration, async (t) => {
+  const { cwd, events, environments } = await admissionFixture(t);
+  const controller = new AbortController();
+  const pending = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: controller.signal }), { code: "CANCELLED" });
+  let queued = false;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try { await readFile(path.join(cwd, "admission-args")); queued = true; break; } catch (error) { if (error.code !== "ENOENT") throw error; }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(queued);
+  controller.abort();
+  await pending;
+  assert.equal(await readFile(path.join(cwd, "admission-cleaned"), "utf8"), "yes");
+  assert.equal(events.some(event => event.phase === "direnv export" && event.status === "preparing"), false);
+});
+
+test("unavailable native preparation admission never falls back to an unaccounted export", integration, async (t) => {
+  const { projects: [cwd], environments } = await fixture(t, {
+    preparationAdmission: { amc: "/missing/amc", contract: "nix-eval", memoryBytes: 1048576 },
+  });
+  await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: "PREPARATION_FAILED" });
+});
+
+test("pre-entry failure, even with completion proof, cannot return an environment", integration, async (t) => {
+  const { cwd, environments, requests } = await admissionFixture(t, [{ enter: false, before: [":complete:0"], exit: 0 }]);
+  await assert.rejects(environments.resolve({ sessionID: "a", cwd }), error => error.code === "PREPARATION_FAILED"
+    && error.preparation.reason === "native entry not confirmed");
+  assert.equal((await requests()).length, 1, "a failed admission is never replayed");
+});
+
+test("an entered preparation settles only with exactly one matching completion proof", integration, async (t) => {
+  for (const step of [
+    { after: [] },
+    { after: [":complete:$code", ":complete:$code"] },
+    { after: [":complete:1"] },
+    { after: [":complete:00"] },
+    { after: [":complete:x", ":complete:$code"] },
+    { before: [":complete:0"], after: [] },
+    { after: [":complete:$code"], exit: 1 },
+  ]) {
+    const { cwd, environments, requests } = await admissionFixture(t, [step]);
+    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), error => error.code === "PREPARATION_FAILED"
+      && /reconciling/.test(error.preparation.reason), JSON.stringify(step));
+    assert.equal((await requests()).length, 1, "an unconfirmed outcome is never replayed");
+  }
+});
+
+test("a proven workload failure keeps its native exit classification", integration, async (t) => {
+  const { cwd, environments } = await admissionFixture(t, [{ code: 7 }]);
+  await assert.rejects(environments.resolve({ sessionID: "a", cwd }), error => error.code === "PREPARATION_FAILED"
+    && error.preparation.reason === "exit 7");
+});
+
+test("typed nonacceptance retries a fresh queued request without consuming the deadline", integration, async (t) => {
+  const { cwd, events, environments, requests } = await admissionFixture(t, [
+    { enter: false, before: [":backpressure:150"], exit: 75 },
+    { enter: false, before: [":backpressure:1"], exit: 75 },
+  ]);
+  assert.equal((await environments.resolve({ sessionID: "a", cwd })).env.PROJECT_TEST, "a:default");
+  const attempts = await requests();
+  assert.equal(attempts.length, 3);
+  assert.equal(new Set(attempts.map(args => args[args.indexOf("--ready-token") + 1])).size, 3, "every attempt uses a fresh token");
+  assert.deepEqual(events.filter(event => event.phase === "direnv export").map(event => event.status), ["waiting", "waiting", "waiting", "preparing", "ready"]);
+  assert.deepEqual(events.filter(event => event.retryAfterMs !== undefined).map(event => event.retryAfterMs), [150, 1]);
+});
+
+test("only a valid backpressure frame with exit 75 authorizes another request", integration, async (t) => {
+  for (const step of [
+    { enter: false, exit: 75 },
+    { enter: false, before: [":backpressure:150"], exit: 1 },
+    { enter: false, before: [":backpressure:0"], exit: 75 },
+    { enter: false, before: [":backpressure:60001"], exit: 75 },
+    { before: [], after: [":backpressure:1"], exit: 75 },
+  ]) {
+    const { cwd, environments, requests } = await admissionFixture(t, [step]);
+    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: "PREPARATION_FAILED" }, JSON.stringify(step));
+    assert.equal((await requests()).length, 1, JSON.stringify(step));
+  }
+});
+
+test("cancelling a backpressure retry wait settles without another request", integration, async (t) => {
+  const { cwd, environments, requests } = await admissionFixture(t, [{ enter: false, before: [":backpressure:60000"], exit: 75 }]);
+  const controller = new AbortController();
+  const pending = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: controller.signal }), { code: "CANCELLED" });
+  await new Promise(resolve => setTimeout(resolve, 600));
+  controller.abort();
+  await pending;
+  assert.equal((await requests()).length, 1);
+});
+
 test("bootstrap is explicitly configured and never invokes project executables", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bootstrap-environment-"));
   t.after(() => rm(root, { recursive: true, force: true }));

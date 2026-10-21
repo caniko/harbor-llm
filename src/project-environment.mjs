@@ -4,6 +4,7 @@ import { lstat, mkdir, open, readFile, readlink, realpath, stat } from "node:fs/
 import { constants } from "node:fs";
 import { inflateSync } from "node:zlib";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -119,6 +120,35 @@ export class EnvironmentApprovalRequired extends Error {
     catch (error) { if (error.code === "ENOENT") return false; throw error; }
   }
 }
+// AMC ready v2 / backpressure v1 control frames on stderr, bound to a fresh
+// token: entry `RS T US`; before entry only, typed nonacceptance
+// `RS T:backpressure:MS US`; after entry, completion proof `RS T:complete:EXIT US`.
+// Proof seen before entry never counts, and malformed post-entry frames can
+// never settle the result. At most two proofs and one partial frame are kept.
+function admissionFrames(stream, token, onEntry) {
+  const state = { entered: false, retryAfterMs: undefined, completions: [] };
+  const frame = new RegExp(`\x1e${token}(:[^\x1e\x1f]{0,24})?\x1f`, "g");
+  const partial = token.length + 26;
+  let pending = "";
+  stream.on("data", chunk => {
+    pending += chunk.toString("latin1");
+    let end = 0;
+    for (const match of pending.matchAll(frame)) {
+      const body = match[1] ?? "";
+      end = match.index + match[0].length;
+      if (!state.entered) {
+        if (!body) { state.entered = true; onEntry(); }
+        const retry = /^:backpressure:([1-9][0-9]{0,4})$/.exec(body)?.[1];
+        if (retry && Number(retry) <= 60_000) state.retryAfterMs = Number(retry);
+      } else if (body && state.completions.length < 2) {
+        state.completions.push(/^:complete:(0|[1-9][0-9]{0,9})$/.exec(body)?.[1] ?? "malformed");
+      }
+    }
+    pending = pending.slice(Math.max(end, pending.length - partial));
+  });
+  return state;
+}
+
 const inside = (root, target) => {
   const relative = path.relative(root, target);
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
@@ -129,7 +159,7 @@ const SELECTION_NEEDS_LOCAL_ENVRC = "Shell selection requires a .envrc inside th
 
 // Selection metadata only. Every launch asks direnv to evaluate from the
 // same baseline; nix-direnv owns its build cache and watch invalidation.
-export function createProjectEnvironments({ roots, direnv, nix, system, baseline, bootstrapEnvironment, consistencyLocks = {}, preparationLockDirectory, direnvApproval = "auto", preparationTimeoutMs = 600_000, onProgress, setsid = "setsid", flock = "flock" }) {
+export function createProjectEnvironments({ roots, direnv, nix, system, baseline, bootstrapEnvironment, consistencyLocks = {}, preparationLockDirectory, direnvApproval = "auto", preparationTimeoutMs = 600_000, preparationAdmission, onProgress, setsid = "setsid", flock = "flock" }) {
   if (!["auto", "manual"].includes(direnvApproval)) throw new Error("direnvApproval must be auto or manual");
   if (!Number.isSafeInteger(preparationTimeoutMs) || preparationTimeoutMs <= 0 || preparationTimeoutMs > 3_600_000) {
     throw new Error("preparationTimeoutMs must be a positive integer no greater than 3600000");
@@ -139,6 +169,15 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
   }
   if (preparationLockDirectory !== undefined && (typeof preparationLockDirectory !== "string" || !path.isAbsolute(preparationLockDirectory))) {
     throw new Error("preparationLockDirectory must be an absolute path");
+  }
+  if (preparationAdmission !== undefined) {
+    if (process.platform !== "linux" || !preparationAdmission || typeof preparationAdmission !== "object" || Array.isArray(preparationAdmission)
+      || typeof preparationAdmission.amc !== "string" || !path.isAbsolute(preparationAdmission.amc) || preparationAdmission.amc.includes("\0")
+      || typeof preparationAdmission.contract !== "string" || !/^[a-zA-Z0-9_.-]{1,64}$/.test(preparationAdmission.contract)
+      || !Number.isSafeInteger(preparationAdmission.memoryBytes) || preparationAdmission.memoryBytes <= 0) {
+      throw new Error("preparationAdmission requires an absolute AMC executable, contract and positive integer memoryBytes on Linux");
+    }
+    preparationAdmission = Object.freeze({ ...preparationAdmission });
   }
   const selections = new Map();
   const blocked = new Map();
@@ -177,28 +216,75 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     const progress = { preparationID: randomUUID(), phase: `${path.basename(binary)} ${args[0]}`, cwd, timeoutMs, ...detail };
     const started = performance.now();
     const deadline = new AbortController();
+    const admitted = preparationAdmission && ["export", "eval"].includes(args[0]);
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; deadline.abort(); }, timeoutMs);
+    let timer;
+    const startDeadline = () => { timer = setTimeout(() => { timedOut = true; deadline.abort(); }, timeoutMs); };
+    if (!admitted) startDeadline();
     const combined = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
     let child, closed;
+    const cancel = () => child?.kill("SIGTERM");
+    const unconfirmed = (reason) => Object.assign(new Error(reason), { admission: reason });
     try {
       combined.throwIfAborted();
-      onProgress?.({ ...progress, status: "preparing" });
+      onProgress?.({ ...progress, status: admitted ? "waiting" : "preparing" });
       // execFile does not forward a `detached` option. Linux setsid gives
       // this preparation its own process group while retaining stdlib limits.
       const grouped = process.platform === "linux";
       const invocation = detail.lock ? [flock, "--exclusive", detail.lock, binary, ...args] : [binary, ...args];
       const guarded = detail.readLock ? [flock, "--shared", detail.readLock, ...invocation] : invocation;
-      const execution = exec(grouped ? setsid : guarded[0], grouped ? ["--", ...guarded] : guarded.slice(1), { cwd, env, signal: combined, maxBuffer: 8 * 1024 * 1024 });
-      child = execution.child;
-      closed = new Promise((resolve) => child.once("close", resolve));
-      const result = await execution;
-      onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
-      return result.stdout;
+      if (admitted) combined.addEventListener("abort", cancel, { once: true });
+      for (;;) {
+        // A fresh unpredictable token per request: no frame of an earlier
+        // attempt can confirm this one.
+        const token = admitted ? randomUUID() : undefined;
+        const command = admitted ? [preparationAdmission.amc, "admission", "exec", "--contract", preparationAdmission.contract,
+          "--queue", "--max-ram-usage", String(preparationAdmission.memoryBytes), "--runtime-max-sec", String(Math.ceil(timeoutMs / 1000)),
+          "--ready-token", token, "--", ...guarded] : guarded;
+        // AMC owns native cancellation and descendant cleanup. Signal its client
+        // without execFile's early AbortError or a process-group SIGKILL.
+        const execution = exec(grouped ? setsid : command[0], grouped ? ["--", ...command] : command.slice(1), { cwd, env, ...(admitted ? {} : { signal: combined }), maxBuffer: 8 * 1024 * 1024 });
+        child = execution.child;
+        closed = new Promise((resolve) => child.once("close", resolve));
+        if (!admitted) {
+          const result = await execution;
+          onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
+          return result.stdout;
+        }
+        if (combined.aborted) cancel();
+        const frames = admissionFrames(child.stderr, token, () => {
+          // The execution clock starts only at native entry.
+          startDeadline();
+          onProgress?.({ ...progress, status: "preparing", waitMs: Math.round(performance.now() - started) });
+        });
+        const outcome = await execution.then(result => ({ result }), error => ({ error }));
+        if (!frames.entered) {
+          // Typed nonacceptance: nothing was accepted, so this intent owner may
+          // submit a new request after the delay. Waiting is not execution.
+          if (outcome.error?.code === 75 && frames.retryAfterMs !== undefined) {
+            onProgress?.({ ...progress, status: "waiting", retryAfterMs: frames.retryAfterMs });
+            await delay(frames.retryAfterMs, undefined, { signal: combined });
+            continue;
+          }
+          throw outcome.error ?? unconfirmed("native entry not confirmed");
+        }
+        // Local cancellation, deadlines and output limits keep their outcomes.
+        combined.throwIfAborted();
+        if (outcome.error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw outcome.error;
+        // A client exit is not workload evidence: settle only with exactly one
+        // proof naming the same exit code. Otherwise AMC reconciles; no replay.
+        const code = outcome.error ? outcome.error.code : 0;
+        if (frames.completions.length !== 1 || !Number.isSafeInteger(code) || frames.completions[0] !== String(code)) {
+          throw unconfirmed(`native outcome reconciling; client ${outcome.error?.signal ? `signal ${outcome.error.signal}` : `exit ${code}`}, completion proof ${frames.completions.join(",") || "missing"}`);
+        }
+        if (outcome.error) throw outcome.error;
+        onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
+        return outcome.result.stdout;
+      }
     } catch (error) {
       // A timed-out direnv can leave its bash/Nix children alive. Reap this
       // preparation's private process group, never the caller's running jobs.
-      if (child?.pid) {
+      if (child?.pid && !admitted) {
         try { process.kill(process.platform === "linux" ? -child.pid : child.pid, "SIGKILL"); }
         catch (killError) { if (killError.code !== "ESRCH") throw new Error("Cannot terminate failed environment preparation"); }
       }
@@ -207,8 +293,8 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       const lockDrift = !signal?.aborted && !timedOut
         && /requires lock file changes but they're not allowed/.test(error.stderr ?? "");
       const reason = signal?.aborted ? "cancelled" : timedOut ? "timeout" : lockDrift ? "lock file changes required"
-        : error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "output limit exceeded"
-          : error.signal ? `terminated by ${error.signal}` : `exit ${error.code ?? "unknown"}`;
+        : error.admission ?? (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "output limit exceeded"
+          : error.signal ? `terminated by ${error.signal}` : `exit ${error.code ?? "unknown"}`);
       const result = { ...progress, status: "failed", reason, elapsedMs: Math.round(performance.now() - started) };
       onProgress?.(result);
       const failure = new Error(`Project environment preparation failed: ${result.phase}; cwd=${cwd}; envrc=${detail.envrc ?? "not yet resolved"}; approval=${detail.approval ?? "not yet checked"}; ${reason}; elapsed=${result.elapsedMs}ms; limit=${timeoutMs}ms; preparation=${progress.preparationID}`);
@@ -217,6 +303,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       throw failure;
     } finally {
       clearTimeout(timer);
+      combined.removeEventListener("abort", cancel);
     }
   }
   // `root` and `boundary` answer different questions: the nearest flake owns
@@ -332,7 +419,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     const generation = await definitionGeneration();
     const identity = createHash("sha256").update(JSON.stringify([
       project.cwd, project.boundary, envrc, hash, generation, shell, system, direnv, nix,
-      preparationTimeoutMs, readLock, setsid, flock, Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),
+      preparationTimeoutMs, preparationAdmission, readLock, setsid, flock, Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),
     ])).digest("hex");
     if (retry) blocked.delete(identity);
     const previous = blocked.get(identity);
