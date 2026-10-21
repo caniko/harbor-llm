@@ -119,6 +119,34 @@ test("bootstrap repair bypasses a held project preparation queue", { timeout: 10
   assert.equal(await pending, "project-ready");
 });
 
+test("cancelling active preparation waits for its producer cleanup", { timeout: 3000 }, async (t) => {
+  const entered = Promise.withResolvers();
+  const cleaning = Promise.withResolvers();
+  const cleaned = Promise.withResolvers();
+  const barrier = createEnvironmentBarrier({ environments: {
+    async resolve({ signal }) {
+      entered.resolve();
+      await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+      cleaning.resolve();
+      await cleaned.promise;
+      throw signal.reason;
+    },
+    release() {},
+  } });
+  t.after(async () => { cleaned.resolve(); await barrier.dispose(); });
+  const controller = new AbortController();
+  let settled = false;
+  const pending = assert.rejects(barrier.resolve({ sessionID: "a", cwd: "/fixture", signal: controller.signal }), { name: "AbortError" })
+    .then(() => { settled = true; });
+  await entered.promise;
+  controller.abort();
+  await cleaning.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, "cancellation is not a producer cleanup receipt");
+  cleaned.resolve();
+  await pending;
+});
+
 test("native Nix lock drift can be repaired through bootstrap before project execution resumes", integration, async (t) => {
   const { projects: [cwd], baseline } = await fixture(t);
   const native = async (args, env = baseline) => {
@@ -255,7 +283,8 @@ test("concurrent sessions share one export and cancellation leaves other waiters
 });
 
 test("cancelling an active export is reported as cancellation, not timeout", integration, async (t) => {
-  const { projects: [cwd], environments } = await fixture(t, { direnvApproval: "auto", preparationTimeoutMs: 5000 });
+  const events = [];
+  const { projects: [cwd], environments } = await fixture(t, { direnvApproval: "auto", preparationTimeoutMs: 5000, onProgress: event => events.push(event) });
   await writeFile(path.join(cwd, ".envrc"), `echo started > ${JSON.stringify(path.join(cwd, "started"))}\nsleep 30\n`);
   const controller = new AbortController();
   const rejected = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: controller.signal }), (error) => {
@@ -273,6 +302,7 @@ test("cancelling an active export is reported as cancellation, not timeout", int
   controller.abort();
   await rejected;
   assert.equal(started, true);
+  assert.ok(events.some(event => event.phase === "direnv export" && event.status === "failed"), "the final waiter must await producer cleanup");
 });
 
 test("watched symlinks use direnv's target timestamp", integration, async (t) => {

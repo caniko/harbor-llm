@@ -73,7 +73,7 @@ async function sharedPreparation(key, signal, prepare, onJoin) {
     state.promise = Promise.resolve().then(() => prepare(controller.signal, state.id)).finally(() => {
       if (preparations.get(key) === state) preparations.delete(key);
     });
-    // The final waiter can leave before subprocess cleanup finishes.
+    // Observe failures even when every waiter has been cancelled.
     state.promise.catch(() => {});
     preparations.set(key, state);
   }
@@ -96,6 +96,7 @@ async function sharedPreparation(key, signal, prepare, onJoin) {
     if (--state.waiters === 0) {
       if (preparations.get(key) === state) preparations.delete(key);
       state.controller.abort();
+      await state.promise.catch(() => {});
     }
   }
 }
@@ -446,7 +447,9 @@ export function createEnvironmentBarrier({ environments, requestApproval }) {
     signal.throwIfAborted();
     // Repair must remain available while a project preparation is waiting.
     if (operation === "resolve" && input.environment === "bootstrap") return environments.resolve({ ...input, signal });
+    let active = false;
     const work = state.tail.catch(() => {}).then(async () => {
+      active = true;
       for (;;) {
         signal.throwIfAborted();
         try {
@@ -469,12 +472,12 @@ export function createEnvironmentBarrier({ environments, requestApproval }) {
       }
     });
     state.tail = work;
-    // Keep queue ownership until work finishes, while a cancelled queued
-    // caller settles promptly and never starts after its predecessor finishes.
+    // Queued cancellation is prompt. Once preparation starts, its producer
+    // owns cancellation completion, including subprocess cleanup.
     let abort;
     try {
       return await Promise.race([work, new Promise((_, reject) => {
-        abort = () => reject(signal.reason);
+        abort = () => { if (!active) reject(signal.reason); };
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
       })]);
