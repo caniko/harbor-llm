@@ -154,6 +154,29 @@ signal without exposing hook output or environment values. Linux preparation
 uses `setsid` (optionally an absolute configured `setsid` path) so cancellation
 also terminates its helper processes. This does not cancel running commands.
 
+On Linux, `preparationAdmission = { amc, contract, memoryBytes }` optionally
+routes exports and flake catalog evaluation through an absolute, operator-selected
+AMC executable as `amc admission exec --queue --ready-token TOKEN`. It requires
+AMC's `admissionQueueVersion = 1`, `admissionReadyVersion = 2` and
+`admissionBackpressureVersion = 1`. The native contract owns RAM/swap limits,
+queue capacity and cleanup; Harbor adds no resource scheduler. Resource waiting
+has no implicit deadline and does not consume `preparationTimeoutMs`: that clock
+begins only when the fresh token's native entry frame arrives on stderr. Progress
+distinguishes `waiting` from `preparing`.
+
+A result settles only with exactly one matching `TOKEN:complete:EXIT` proof seen
+after entry. Pre-entry failure, missing entry, and missing, duplicate, malformed
+or mismatched proof fail closed without returning an environment or replaying
+the preparation; an entered outcome without proof is reported as `reconciling`
+for AMC to resolve. Only typed nonacceptance before entry (a valid
+`TOKEN:backpressure:MS` frame with exit 75) submits a new request with a fresh
+token after the delay, still as waiting. There is no unaccounted fallback.
+Cancellation waits for AMC's client to finish its cleanup attempt; the broker
+retains reservations whose native cleanup remains unconfirmed. The final shared
+export waiter also awaits its producer; cancelling one of several waiters leaves
+the others running. The flake library and package advertise
+`preparationAdmissionVersion = 2` and `preparationBackpressureVersion = 1`.
+
 Use the shell tool's `workdir` field for another project. A `cd` inside the
 command changes its eventual directory but does not select another environment:
 preparation has already occurred at launch. The native shell description includes

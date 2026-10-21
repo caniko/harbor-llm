@@ -79,6 +79,7 @@ export default {
       preparationLockDirectory: ctx.options.preparationLockDirectory,
       direnvApproval: ctx.options.direnvApproval,
       preparationTimeoutMs: ctx.options.preparationTimeoutMs,
+      preparationAdmission: ctx.options.preparationAdmission,
       setsid: ctx.options.setsid,
       flock: ctx.options.flock,
       onProgress: (progress) => {
