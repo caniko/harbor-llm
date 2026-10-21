@@ -75,14 +75,15 @@ async function admissionFixture(t, plan = [], options = {}) {
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { spawn } from "node:child_process";
+// Own cancellation before the request becomes observable to the test.
+let cancelled = false;
+process.on("SIGTERM", async () => { cancelled = true; await delay(100); await writeFile("admission-cleaned", "yes"); process.exit(143); });
 const args = process.argv.slice(2);
 await appendFile("admission-args", JSON.stringify(args) + "\\n");
 const exports = (await readFile("admission-args", "utf8")).trim().split("\\n").filter(line => JSON.parse(line).includes("export")).length;
 const step = (args.includes("export") && JSON.parse(await readFile("amc-plan.json", "utf8"))[exports - 1]) || {};
 const token = args[args.indexOf("--ready-token") + 1];
 const frame = body => "\\x1e" + token + body + "\\x1f";
-let cancelled = false;
-process.on("SIGTERM", async () => { cancelled = true; await delay(100); await writeFile("admission-cleaned", "yes"); process.exit(143); });
 await delay(step.wait ?? 200);
 if (!cancelled) {
   for (const body of step.before ?? []) process.stderr.write(frame(body));
