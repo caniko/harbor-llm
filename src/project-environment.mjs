@@ -28,13 +28,13 @@ async function watchState(file) {
   } catch (error) { if (error.code === "ENOENT") return [file, null]; throw error; }
 }
 
-async function watchGeneration(files) {
+async function watchStates(files) {
   // Bounded batches avoid exhausting file descriptors on recursive watch_dir.
   const states = [];
   for (let start = 0; start < files.length; start += 64) {
     states.push(...await Promise.all(files.slice(start, start + 64).map(watchInputState)));
   }
-  return createHash("sha256").update(JSON.stringify(states)).digest("hex");
+  return states;
 }
 
 async function watchInputState(file) {
@@ -306,7 +306,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
   // Returns the launch environment plus the fallback reason, if any. Ordinary
   // launches never fail for coverage — only approval, evaluation, cancellation
   // and explicit selection errors still reject.
-  async function capture(project, shell, signal, context = {}, retry = false) {
+  async function capture(project, shell, signal, context = {}, retry = false, allowCacheRefresh = true) {
     if (shell !== undefined && !project.covered) throw new Error(OUTSIDE_ROOTS);
     if (!project.covered) return { env: fallback(), reason: "outside configured project roots" };
     const env = { ...base, ...(shell === undefined ? {} : { PROJECT_DEV_SHELL: shell }) };
@@ -322,13 +322,15 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     const watchFiles = [...new Set([...definitions, ...(knownWatches.get(envrc) ?? [])])].sort();
     // Hash the declaration/lock pair as well as native watches: same-size edits
     // within one timestamp tick must release a blocked generation.
-    const definitionGeneration = async () => {
+    const definitionState = async () => {
       const contents = await Promise.all(definitions.map(async file => {
         try { return await revision(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; }
       }));
-      return createHash("sha256").update(JSON.stringify([contents, await watchGeneration(watchFiles)])).digest("hex");
+      return [contents, await watchStates(watchFiles)];
     };
-    const generation = await definitionGeneration();
+    const before = await definitionState();
+    const encoded = JSON.stringify(before);
+    const generation = createHash("sha256").update(encoded).digest("hex");
     const identity = createHash("sha256").update(JSON.stringify([
       project.cwd, project.boundary, envrc, hash, generation, shell, system, direnv, nix,
       preparationTimeoutMs, readLock, setsid, flock, Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),
@@ -350,8 +352,23 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       // Every waiter rechecks native approval and definition freshness. Source
       // watch invalidation is still handled inside each direnv export.
       if (await requireApproval(project, env, signal, { forSelection: shell !== undefined }) !== envrc
-        || await revision(envrc) !== hash
-        || await definitionGeneration() !== generation) throw new Error("Project environment changed during preparation; retry");
+        || await revision(envrc) !== hash) throw new Error("Project environment changed during preparation; retry");
+      const after = await definitionState();
+      if (JSON.stringify(after) !== encoded) {
+        // nix-direnv publishes renewed cache bodies atomically. Discard this
+        // snapshot and re-export once, rather than treating its own outputs as
+        // source edits. In-place body edits and other watched changes still
+        // fail closed; an endlessly replaced cache cannot cause a retry loop.
+        // watchInputState's nine-field cache states include a retained profile
+        // target and body hash; ordinary watched files cannot take this path.
+        const cacheReplacement = after[1].every((state, index) =>
+          JSON.stringify(state) === JSON.stringify(before[1][index])
+          || (state.length === 9 && state[1] !== before[1][index][1]));
+        if (allowCacheRefresh && cacheReplacement && JSON.stringify(after[0]) === JSON.stringify(before[0])) {
+          return capture(project, shell, signal, context, retry, false);
+        }
+        throw new Error("Project environment changed during preparation; retry");
+      }
     }
     catch (error) {
       // A definition can change between status and export. Turn a revoked
@@ -359,7 +376,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       // Recovery keeps the selection restriction so a vanishing local .envrc
       // can never prompt for or auto-allow an ancestor on selection's behalf.
       if (error.code === "CANCELLED" || error.code === "TIMEOUT") throw error;
-      if (error.code === "LOCK_DRIFT" && await definitionGeneration() === generation) {
+      if (error.code === "LOCK_DRIFT" && JSON.stringify(await definitionState()) === encoded) {
         if (blocked.size >= 128) blocked.delete(blocked.keys().next().value);
         blocked.set(identity, { message: error.message, preparation: error.preparation });
       }
@@ -380,14 +397,24 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     if (shell !== undefined && env.PROJECT_DEV_SHELL_ACTIVE !== shell) {
       throw new Error("Project .envrc did not acknowledge the selected flake shell");
     }
-    return { env: Object.freeze(env), reason: null };
+    // Use the final watch set, including inputs discovered by this export, so
+    // the first successful snapshot has the same identity as later reuses.
+    const inputs = [];
+    for (const file of [...new Set([...definitions, ...watches.map(w => w.path)])].sort()) {
+      inputs.push([await watchInputState(file), definitions.includes(file)
+        ? await revision(file).catch(error => error.code === "ENOENT" ? null : Promise.reject(error)) : null]);
+    }
+    return { env: Object.freeze(env), reason: null,
+      generation: createHash("sha256").update(JSON.stringify([hash, shell, inputs])).digest("hex") };
   }
   return {
     list,
-    async resolve({ sessionID, cwd, signal, environment = "project", invocationID, toolCallID, retry = false }) {
+    async resolve({ sessionID, cwd, signal, environment = "project", invocationID, toolCallID, retry = false, rootEnvironment = false }) {
       signal?.throwIfAborted();
       if (!["project", "bootstrap"].includes(environment)) throw new Error("Unknown environment mode");
-      const project = await projectAt(cwd);
+      const discovered = await projectAt(cwd);
+      // Long-lived workspace processes use a stable root environment across file queries.
+      const project = rootEnvironment && discovered.root ? { ...discovered, cwd: discovered.root } : discovered;
       const context = { sessionID, invocationID, toolCallID, environment };
       if (environment === "bootstrap") {
         if (!bootstrap) throw new Error("Explicit repair execution requires bootstrapEnvironment configuration");
@@ -398,7 +425,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       const shell = project.covered ? selections.get(key(sessionID, project.root)) : undefined;
       if (shell !== undefined && !(await list(cwd, signal)).shells.includes(shell)) throw new Error("Selected shell is no longer in the flake");
       const captured = await capture(project, shell, signal, context, retry);
-      return { ...project, shell: shell ?? null, env: captured.env, fallback: captured.reason };
+      return { ...project, shell: shell ?? null, env: captured.env, fallback: captured.reason, generation: captured.generation };
     },
     async select({ sessionID, cwd, shell, signal }) {
       const project = await list(cwd, signal);

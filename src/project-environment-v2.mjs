@@ -1,5 +1,5 @@
 // Feasibility prototype, intentionally not the default package entrypoint.
-// Requires the proposed session-aware shell hook. PTYs/formatters are not covered.
+// Requires the session-aware shell hook. Native LSP uses the same preparation barrier.
 import { createProjectEnvironments, createEnvironmentBarrier } from "./project-environment.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
@@ -114,6 +114,20 @@ export default {
       if (snapshot.fallback) {
         console.info("project-environment", JSON.stringify({ status: "baseline", cwd: invocation.cwd, reason: snapshot.fallback }));
       }
+    });
+    await ctx.lsp?.hook("start.before", async (invocation) => {
+      if (ctx.location.workspaceID) return;
+      if (!invocation.sessionID || !invocation.signal) {
+        throw new Error("Project environments require the session-aware native LSP hook API");
+      }
+      const snapshot = await barrier.resolve({
+        sessionID: invocation.sessionID, signal: invocation.signal,
+        cwd: path.dirname(invocation.filePath), rootEnvironment: true,
+      });
+      invocation.cwd = snapshot.root ?? invocation.cwd;
+      invocation.env = { ...snapshot.env, PWD: invocation.cwd, ...invocation.env };
+      invocation.extendEnv = false;
+      invocation.generation = snapshot.generation;
     });
     await ctx.tool.transform((editor) => {
       for (const tool of editor.list()) {

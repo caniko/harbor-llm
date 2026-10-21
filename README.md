@@ -153,6 +153,9 @@ distinguish timeout, cancellation, buffer overflow, exit code and termination
 signal without exposing hook output or environment values. Linux preparation
 uses `setsid` (optionally an absolute configured `setsid` path) so cancellation
 also terminates its helper processes. This does not cancel running commands.
+An atomic nix-direnv cache replacement discards the first environment snapshot
+and permits one additional bounded export. Source edits, in-place cache edits,
+or a cache that keeps replacing itself still fail closed; commands are not replayed.
 
 Use the shell tool's `workdir` field for another project. A `cd` inside the
 command changes its eventual directory but does not select another environment:
@@ -215,14 +218,24 @@ against the exact backend selected by the consumer.
 Run the model-free native-executor canary against an explicit candidate:
 
 ```sh
-node test/check-project-environment-v2.mjs /absolute/opencode /absolute/direnv /absolute/nix
+node test/check-project-environment-v2.mjs /absolute/opencode /absolute/direnv /absolute/nix /absolute/nix-direnv/direnvrc
 ```
 
 For source testing, set `OPENCODE_SOURCE=/checkout` and pass the declared Bun
 executable instead of `opencode`. The check uses isolated state and fixtures,
 tests direct-shell approval plus native permission denial, and preserves its
 redacted backend log. `PROJECT_ENV_PLUGIN` may select an exact packaged plugin
-directory. It does not open production state or issue provider requests.
+directory. When testing a consumer wrapper, `PROJECT_ENV_IMPLEMENTATION` supplies
+its immutable Harbor implementation path as the `plugin` option. It does not
+open production state or issue provider requests.
+
+Run this separately from `npm test` when changing preparation or the native
+adapter. It verifies shared-waiter and final-waiter cancellation, bounded hung
+cache renewal, bootstrap access during preparation/lock waits, and lock/child cleanup
+followed by successful retries. The cache fixture sources the supplied
+nix-direnv script with controlled `_nix` responses: a dangling profile must renew
+once for concurrent callers, and warm loads must preserve the watched cache.
+This exercises real nix-direnv cache handling, not actual Nix builds or GC.
 
 The Nix `environments` check supplies real direnv/Nix binaries. Local resolver
 tests run with `DIRENV_BIN=/absolute/direnv NIX_BIN=/absolute/nix node --test
