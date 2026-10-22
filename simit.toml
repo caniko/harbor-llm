@@ -3,7 +3,14 @@ platform = "github"
 provider = "actions"
 runtime = "nix"
 runner = "ubuntu-24.04"
-nix_builds = [".#default", ".#checks.x86_64-linux.environments", ".#checks.x86_64-linux.plugin", ".#checks.x86_64-linux.module", ".#checks.x86_64-linux.formatting", ".#checks.x86_64-linux.shell"]
+nix_builds = [
+  ".#default",
+  ".#checks.x86_64-linux.environments",
+  ".#checks.x86_64-linux.plugin",
+  ".#checks.x86_64-linux.module",
+  ".#checks.x86_64-linux.formatting",
+  ".#checks.x86_64-linux.shell",
+]
 
 [ci.nix_build]
 only = true

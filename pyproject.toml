@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harbor-llm"
+version = "0.1.0"
+description = "Provider-neutral MCP run admission contracts"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["src/mcp-admission.LICENSE"]
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+packages = ["harbor_llm"]
+
+[tool.setuptools.package-data]
+harbor_llm = ["contracts/*.json"]

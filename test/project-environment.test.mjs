@@ -219,6 +219,12 @@ test("cancelling a backpressure retry wait settles without another request", int
   assert.equal((await requests()).length, 1);
 });
 
+test("a successful native client without entry evidence cannot return an environment", integration, async (t) => {
+  const { cwd, amc, environments } = await admissionFixture(t);
+  await writeFile(amc, `#!${process.execPath}\nprocess.stdout.write("{}");\n`);
+  await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: "PREPARATION_FAILED" });
+});
+
 test("bootstrap is explicitly configured and never invokes project executables", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bootstrap-environment-"));
   t.after(() => rm(root, { recursive: true, force: true }));
