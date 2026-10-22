@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "maxTimeoutMs": 3600000,
+  "maxInputBytes": 67108864,
+  "maxOutputBytes": 16777216,
+  "maxStderrBytes": 1048576,
+  "maxArguments": 256,
+  "maxArgumentBytes": 65536,
+  "maxJsonDepth": 64,
+  "terminationGraceMs": 250,
+  "cleanupTimeoutMs": 2000
+}

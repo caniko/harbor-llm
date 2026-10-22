@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "server": {
+    "connectionId": "fixture",
+    "name": "A provider-independent reader",
+    "url": "https://tools.example/mcp"
+  },
+  "policy": {
+    "version": 1,
+    "servers": {
+      "fixture": {
+        "url": "https://tools.example/mcp",
+        "gatewayUrl": "https://worker.example/profile/main",
+        "serverHostId": "host-a",
+        "executionHostIds": ["host-a", "host-b"]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "same host",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "expectedCrossHost": false
+    },
+    {
+      "name": "explicit cross host",
+      "runId": "run-a",
+      "executionHostId": "host-b",
+      "expectedCrossHost": true
+    },
+    {
+      "name": "unapproved host",
+      "runId": "run-a",
+      "executionHostId": "host-c",
+      "expectedReason": "execution_host_not_authorized"
+    },
+    {
+      "name": "missing run",
+      "runId": "",
+      "executionHostId": "host-a",
+      "expectedReason": "invalid_identity"
+    },
+    {
+      "name": "whitespace identity",
+      "runId": "run a",
+      "executionHostId": "host-a",
+      "expectedReason": "invalid_identity"
+    },
+    {
+      "name": "trailing newline identity",
+      "runId": "run-a\n",
+      "executionHostId": "host-a",
+      "expectedReason": "invalid_identity"
+    },
+    {
+      "name": "wrong endpoint",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "url": "https://tools.example/mcp/",
+      "expectedReason": "endpoint_mismatch"
+    },
+    {
+      "name": "wrong connection",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "connectionId": "other",
+      "expectedReason": "server_not_authorized"
+    },
+    {
+      "name": "inherited connection",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "connectionId": "constructor",
+      "expectedReason": "server_not_authorized"
+    },
+    {
+      "name": "unsafe HTTP recipient",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "http://remote.example",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "recipient query",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.example?secret=x",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "recipient userinfo",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://user:secret@worker.example",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "recipient fragment",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.example#fragment",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "trailing newline recipient",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.example/\n",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "loopback HTTP",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "http://127.0.0.1:9119/chat",
+      "expectedCrossHost": false
+    },
+    {
+      "name": "IPv6 loopback HTTP",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "http://[::1]:8642",
+      "expectedCrossHost": false
+    },
+    {
+      "name": "profile recipient",
+      "runId": "run-b",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.example/p/secondary/api",
+      "expectedCrossHost": false
+    },
+    {
+      "name": "repaired authority",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https:worker.example",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "repaired backslash",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.example\\secret",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "abbreviated loopback",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "http://127.1/mcp",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "empty query",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.example?",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "empty fragment",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.example#",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "encoded hostname",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://%77orker.example",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "empty hexadecimal host",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://0x",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "empty hexadecimal domain suffix",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.0x",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "IPv6 dotted tail",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://[::ffff:192.0.2.1]/mcp",
+      "expectedCrossHost": false
+    },
+    {
+      "name": "IPv6 hexadecimal tail",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://[::ffff:c000:201]/mcp",
+      "expectedCrossHost": false
+    },
+    {
+      "name": "multiple trailing dots numeric host",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://1../mcp",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "multiple trailing dots numeric domain",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://worker.123../mcp",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "multiple trailing dots IPv4",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://127.0.0.1../mcp",
+      "expectedReason": "unsafe_endpoint"
+    },
+    {
+      "name": "multiple trailing dots hexadecimal host",
+      "runId": "run-a",
+      "executionHostId": "host-a",
+      "gatewayUrl": "https://0x../mcp",
+      "expectedReason": "unsafe_endpoint"
+    }
+  ]
+}
