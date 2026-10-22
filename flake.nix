@@ -4,6 +4,11 @@
   inputs = {
     harbor-meta.url = "git+https://github.com/caniko/harbor-meta.git?ref=feat/shared-timezone-env&rev=1f272a44dea9dc531b30efb384720ddb46f083e3";
     nixpkgs.follows = "harbor-meta/nixpkgs";
+    harbor-rs = {
+      url = "github:caniko/harbor-rs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.harbor-meta.follows = "harbor-meta";
+    };
   };
 
   outputs = {
@@ -11,7 +16,6 @@
     nixpkgs,
     harbor-meta,
     harbor-rs,
-    harborRoot,
     ...
   }: let
     forSystems = nixpkgs.lib.genAttrs ["x86_64-linux" "aarch64-linux"];
@@ -47,7 +51,8 @@
         pname = "harbor-llm-custodian";
         version = "0.1.0";
         src = pkgs.lib.cleanSourceWith {
-          src = harborRoot.outPath;
+          src = ./.;
+          name = "harbor-llm-custodian-source";
           filter = path: type:
             craneLib.filterCargoSources path type
             || pkgs.lib.hasPrefix "${toString ./.}/protocol/" path
