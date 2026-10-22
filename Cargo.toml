@@ -37,3 +37,7 @@ zeroize = "1"
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+
+[workspace]
+resolver = "3"
+members = [".", "runtime", "tools/codegen"]
