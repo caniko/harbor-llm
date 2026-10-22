@@ -2,7 +2,7 @@
   description = "Generic LLM harness integrations and project-scoped environments";
 
   inputs = {
-    harbor-meta.url = "git+https://github.com/caniko/harbor-meta.git?ref=feat/shared-timezone-env&rev=1f272a44dea9dc531b30efb384720ddb46f083e3";
+    harbor-meta.url = "github:caniko/harbor-meta";
     nixpkgs.follows = "harbor-meta/nixpkgs";
     harbor-rs = {
       url = "github:caniko/harbor-rs";
