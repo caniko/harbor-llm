@@ -1,12 +1,30 @@
 # harbor-llm
 
+## Shared execution contracts
+
+The execution protocol, authenticated channel codecs and bounded native JSON
+transport live in this component. See [execution transport](docs/execution-transport.md)
+for APIs, wire compatibility, resource limits and consumer adoption requirements.
+
 Generic harness integrations, starting with session/project-scoped dev-shell
 switching in OpenCode. Language Harbors own compilers and their dev shells;
 `harbor-meta` owns generic shell composition. Consumers supply project roots,
 approval policy and backend configuration. Model serving and provider catalogs
 belong to inference integrations, separate from this environment engine.
 
-## Contract
+## MCP admission library
+
+`harbor-llm/mcp-admission` and `harbor_llm.mcp_admission` provide the retained
+provider-neutral ESM/TypeScript and Python admission contracts. Both use the
+same canonical schemas and conformance vectors under `contracts/`. The private
+package identities and versions remain `harbor-llm` at `0.1.0`; root release
+owners use distinct `harbor-llm` and `harbor-llm-python` tag namespaces.
+
+See [MCP admission](docs/mcp-admission.md) for the contract, consumer boundary,
+and native verification commands. The MCP code and assets retain the MIT
+license in `src/mcp-admission.LICENSE`.
+
+## Project environment contract
 
 - No agent command is accepted or executed by the environment backend.
 - An operator-installed registry names canonical project directories and exact

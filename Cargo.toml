@@ -1,0 +1,39 @@
+[package]
+name = "harbor-llm-protocol"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Provider-free execution contracts and bounded bridge framing for Harbor harness integrations"
+license = "MIT"
+repository = "https://github.com/caniko/harbor"
+readme = "rust/README.md"
+include = [
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/rust/**",
+  "/protocol/**",
+  "/LICENSE",
+  "/tests/**",
+  "/src/execution/channel.mjs",
+  "/src/execution/commands.mjs",
+  "/src/execution/command-schema.mjs",
+  "/src/execution/records.mjs",
+  "/src/execution/protocol.mjs",
+  "/src/execution/schema.mjs",
+  "/src/json.mjs",
+  "/docs/execution-transport.md",
+]
+
+[lib]
+path = "rust/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"
+zeroize = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

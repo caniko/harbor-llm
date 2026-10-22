@@ -3,10 +3,68 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/caniko/harbor.git",
+    "directory": "components/llm"
+  },
+  "exports": {
+    "./execution-dispatcher": {
+      "types": "./src/execution/dispatcher.d.mts",
+      "import": "./src/execution/dispatcher.mjs"
+    },
+    "./execution-commands": {
+      "types": "./src/execution/commands.d.mts",
+      "import": "./src/execution/commands.mjs"
+    },
+    "./opencode-v2": {
+      "types": "./src/execution/opencode-v2.d.mts",
+      "import": "./src/execution/opencode-v2.mjs"
+    },
+    "./execution-channel": {
+      "types": "./src/execution/channel.d.mts",
+      "import": "./src/execution/channel.mjs"
+    },
+    "./execution-protocol": {
+      "types": "./src/execution/protocol.d.mts",
+      "import": "./src/execution/protocol.mjs"
+    },
+    "./execution-framing": {
+      "types": "./src/execution/framing.d.mts",
+      "import": "./src/execution/framing.mjs"
+    },
+    "./transport": {
+      "types": "./src/transport.d.mts",
+      "import": "./src/transport.mjs"
+    },
+    "./mcp-admission": {
+      "types": "./src/mcp-admission.d.mts",
+      "import": "./src/mcp-admission.mjs"
+    },
+    "./mcp-admission-schema": {
+      "types": "./src/mcp-admission-schema.d.mts",
+      "import": "./src/mcp-admission-schema.mjs"
+    },
+    "./contracts/*": "./contracts/*",
+    "./src/*": "./src/*",
+    "./plugins/*": "./plugins/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "plugins",
+    "contracts",
+    "protocol"
+  ],
   "scripts": {
+    "typecheck": "tsc --noEmit --strict --module NodeNext --target ES2023 --lib ES2023,ESNext.Disposable,DOM test/mcp-admission.types.mts test/execution.types.mts",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.30"
+    "@opencode-ai/plugin": "1.18.30",
+    "@opencode/client": "2.0.22"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
   }
 }
