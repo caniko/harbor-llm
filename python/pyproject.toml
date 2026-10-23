@@ -8,10 +8,11 @@ version = "0.1.0"
 description = "Provider-neutral MCP run admission contracts"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["src/mcp-admission.LICENSE"]
+# mcp-admission.LICENSE links to the shared src/ copy; license files must
+# live inside the project directory.
+license-files = ["mcp-admission.LICENSE"]
 
 [tool.setuptools]
-package-dir = { "" = "python" }
 packages = ["harbor_llm"]
 
 [tool.setuptools.package-data]

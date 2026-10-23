@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 type HmacSha256 = Hmac<Sha256>;
 
 /// Fixed authenticated-record layout and domain, independent of command data.
-pub const SCHEMA: &str = include_str!("../protocol/channel.json");
+pub const SCHEMA: &str = include_str!("protocol/channel.json");
 
 /// Local endpoint direction. Directional keys prevent reflected replies.
 #[derive(Clone, Copy)]

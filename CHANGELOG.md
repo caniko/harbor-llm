@@ -1,7 +1,8 @@
 # Changelog
-
 ## [Unreleased]
-
+- Give each release owner its own directory: the protocol crate moves to
+  `rust/Cargo.toml` and the Python distribution to `python/pyproject.toml`, each
+  with its own CHANGELOG. The root `Cargo.toml` is now a virtual workspace.
 - Add shared execution protocol bindings, bounded transport and authenticated
   Rust/JavaScript channels while preserving the predecessor v1 schema bytes.
 - Add separately schema-bound v2 command codecs and directional authentication,

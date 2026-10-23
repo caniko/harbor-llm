@@ -14,7 +14,7 @@ mod types;
 pub use types::*;
 
 /// Exact command definition, including the pinned v1 schema dependency.
-pub const SCHEMA: &str = include_str!("../protocol/commands.json");
+pub const SCHEMA: &str = include_str!("protocol/commands.json");
 
 pub(crate) fn schema() -> &'static Value {
     static OWNER: OnceLock<Value> = OnceLock::new();
@@ -127,7 +127,7 @@ impl TransferReceiver {
         }]
         .as_u64()
         .unwrap();
-        let transport: Value = serde_json::from_str(include_str!("../protocol/transport.json"))
+        let transport: Value = serde_json::from_str(include_str!("protocol/transport.json"))
             .expect("checked-in transport policy");
         if maximum_bytes == 0
             || maximum_bytes > ceiling
