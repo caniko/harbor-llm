@@ -57,7 +57,7 @@ fn command_authentication_is_interoperable_and_separate_from_v1() {
         const peer = new AuthenticatedChannel({key: Buffer.alloc(32, 1), nonce: Buffer.alloc(32, 2), binding: Buffer.alloc(32, 3), role: 'bridge'});
         const chunks = []; for await (const chunk of process.stdin) chunks.push(chunk);
         process.stdout.write(peer.seal(peer.open(Buffer.concat(chunks))));
-    "#]).current_dir(env!("CARGO_MANIFEST_DIR")).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    "#]).current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
     child.stdin.take().unwrap().write_all(&bytes).unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
@@ -122,7 +122,7 @@ fn rust_and_javascript_exchange_commands_without_changing_v1_schema() {
         process.stdout.write(encode(decode(Buffer.concat(chunks))));
     "#,
         ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

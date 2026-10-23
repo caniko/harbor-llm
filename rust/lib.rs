@@ -14,10 +14,10 @@ use serde_json::Value;
 use std::{fmt, sync::OnceLock};
 
 /// Exact canonical schema bytes, preserved from the qualified Toolbelt contract.
-pub const SCHEMA: &str = include_str!("../protocol/execution.json");
+pub const SCHEMA: &str = include_str!("protocol/execution.json");
 
 /// Shared non-raiseable byte, execution and cleanup ceilings for native bridges.
-pub const TRANSPORT_POLICY: &str = include_str!("../protocol/transport.json");
+pub const TRANSPORT_POLICY: &str = include_str!("protocol/transport.json");
 
 /// Redacted structural validation failure.
 #[derive(Debug, Eq, PartialEq)]

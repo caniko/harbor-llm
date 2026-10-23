@@ -56,7 +56,8 @@
           filter = path: type:
             craneLib.filterCargoSources path type
             || pkgs.lib.hasPrefix "${toString ./.}/protocol/" path
-            || path == "${toString ./.}/rust/README.md"
+            # rust/protocol links to the shared protocol directory.
+            || builtins.elem path ["${toString ./.}/rust/README.md" "${toString ./.}/rust/protocol"]
             || builtins.elem path ["${toString ./.}/runtime/src/standalone.mjs" "${toString ./.}/runtime/src/native_observer.mjs"];
         };
         strictDeps = true;
@@ -93,7 +94,7 @@
         npmDeps = pkgs.importNpmLock {npmRoot = ./.;};
         installPhase = ''
           mkdir -p $out/lib/harbor-llm
-          cp -r src plugins contracts protocol python node_modules package.json pyproject.toml $out/lib/harbor-llm/
+          cp -r src plugins contracts protocol python node_modules package.json $out/lib/harbor-llm/
         '';
       };
     });

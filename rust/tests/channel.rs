@@ -59,7 +59,7 @@ fn javascript_and_rust_exchange_exact_authenticated_records_in_both_directions()
     "#;
     let hex: String = outgoing.iter().map(|byte| format!("{byte:02x}")).collect();
     let module = format!(
-        "file://{}/src/execution/channel.mjs",
+        "file://{}/../src/execution/channel.mjs",
         env!("CARGO_MANIFEST_DIR")
     );
     let output = Command::new(std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".into()))

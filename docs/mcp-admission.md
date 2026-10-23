@@ -102,8 +102,8 @@ their actual delivery paths separately.
 
 ## Python consumers
 
-The component `pyproject.toml` builds the `harbor-llm` Python distribution. Pin
-the full Harbor Git revision and select `components/llm` as its subdirectory.
+`python/pyproject.toml` builds the `harbor-llm` Python distribution. Pin
+the full Harbor Git revision and select `components/llm/python` as its subdirectory.
 `harbor_llm.mcp_admission` exposes `bind_mcp_servers_to_run`,
 `require_mcp_run_binding`, `parse_mcp_admission_policy`,
 `require_mcp_credential_endpoint`, and `is_mcp_admission_identifier`. Bindings
