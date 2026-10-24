@@ -5,6 +5,6 @@ import { test } from "node:test";
 test("public declarations preserve schema literals and replace stale binding types", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   execFileSync(fileURLToPath(new URL("../node_modules/.bin/tsc", import.meta.url)), [
-    "--noEmit", "--strict", "--module", "NodeNext", "--target", "ES2023", "--lib", "ES2023,ESNext.Disposable,DOM", "test/mcp-admission.types.mts", "test/execution.types.mts",
+    "--noEmit", "--strict", "--module", "NodeNext", "--target", "ES2023", "test/mcp-admission.types.mts",
   ], { cwd: root, stdio: "pipe" });
 });

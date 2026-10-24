@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "engineRevision": "047c74ec64ca6029f93be4bb4d1f5797c8838b9a",
-  "clientVersion": "2.0.22",
-  "maxRequests": 256,
-  "maxPages": 64,
-  "maxMessages": 4096,
-  "maxTotalResponseBytes": 67108864
-}

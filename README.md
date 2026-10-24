@@ -1,11 +1,5 @@
 # harbor-llm
 
-## Shared execution contracts
-
-The execution protocol, authenticated channel codecs and bounded native JSON
-transport live in this component. See [execution transport](docs/execution-transport.md)
-for APIs, wire compatibility, resource limits and consumer adoption requirements.
-
 Generic harness integrations, starting with session/project-scoped dev-shell
 switching in OpenCode. Language Harbors own compilers and their dev shells;
 `harbor-meta` owns generic shell composition. Consumers supply project roots,
@@ -171,19 +165,6 @@ distinguish timeout, cancellation, buffer overflow, exit code and termination
 signal without exposing hook output or environment values. Linux preparation
 uses `setsid` (optionally an absolute configured `setsid` path) so cancellation
 also terminates its helper processes. This does not cancel running commands.
-
-On Linux, `preparationAdmission = { amc, contract, memoryBytes }` optionally
-routes exports and flake catalog evaluation through an absolute, operator-selected
-AMC executable. It requires AMC's version-1 queued admission and native readiness
-capabilities. The native contract owns RAM/swap limits, queue capacity and cleanup;
-Harbor adds no resource scheduler. Resource waiting has no implicit deadline and
-does not consume `preparationTimeoutMs`: that clock begins only after the fresh
-native entry token arrives. Progress distinguishes `waiting` from `preparing`.
-Missing admission or entry evidence fails closed, without an unaccounted fallback.
-Cancellation waits for AMC's client to finish its cleanup attempt; the broker
-retains reservations whose native cleanup remains unconfirmed. The final shared
-export waiter also awaits its producer; cancelling one of several waiters leaves
-the others running. The package advertises `preparationAdmissionVersion = 1`.
 
 Use the shell tool's `workdir` field for another project. A `cd` inside the
 command changes its eventual directory but does not select another environment:
