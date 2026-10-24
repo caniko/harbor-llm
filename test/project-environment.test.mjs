@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -54,6 +54,249 @@ test("relative preparation lock directories are rejected", () => {
     roots: ["/workspace"], direnv: "/bin/direnv", nix: "/bin/nix",
     baseline: {}, preparationLockDirectory: "relative",
   }), /preparationLockDirectory must be an absolute path/);
+});
+
+test("preparation admission requires an absolute executable and bounded request", () => {
+  for (const preparationAdmission of [{}, { amc: "amc", contract: "nix-eval", memoryBytes: 4096 }, { amc: "/bin/amc", contract: "", memoryBytes: 4096 }, ...[0, 1, 4097].map(memoryBytes => ({ amc: "/bin/amc", contract: "nix-eval", memoryBytes }))]) {
+    assert.throws(() => createProjectEnvironments({ roots: ["/workspace"], direnv: "/bin/direnv", nix: "/bin/nix", baseline: {}, preparationAdmission }), /preparationAdmission/);
+  }
+});
+
+async function admissionFixture(t, options = {}) {
+  const { projects, baseline } = await fixture(t);
+  const cwd = projects[0];
+  const amc = path.join(cwd, "amc-fixture");
+  await writeFile(amc, `#!${process.execPath}
+import { writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+import { spawn } from "node:child_process";
+const args = process.argv.slice(2);
+await writeFile("admission-args", JSON.stringify(args) + "\\n", { flag: "a" });
+let cancelled = false;
+process.on("SIGTERM", async () => { cancelled = true; await delay(100); await writeFile("admission-cleaned", "yes"); process.exit(143); });
+await delay(200);
+if (!cancelled) {
+  const token = args[args.indexOf("--ready-token") + 1];
+  process.stderr.write("\\x1e" + token.slice(0, 10));
+  await delay(10);
+  process.stderr.write(token.slice(10) + "\\x1f");
+  const payload = args.slice(args.indexOf("--") + 1);
+  spawn(payload[0], payload.slice(1), { stdio: "inherit" }).on("exit", code => {
+    process.stderr.write("\\x1e" + token + ":complete:" + (code ?? 1) + "\\x1f", () => process.exit(code ?? 1));
+  });
+}
+`, { mode: 0o700 });
+  const events = [];
+  const environments = createProjectEnvironments({ roots: projects, baseline, direnv, nix,
+    system: process.arch === "arm64" ? "aarch64-linux" : "x86_64-linux", preparationTimeoutMs: 100,
+    preparationAdmission: { amc, contract: "nix-eval", memoryBytes: 1048576 },
+    onProgress: event => events.push(event), ...options });
+  return { cwd, amc, events, environments };
+}
+
+test("native preparation queues beyond its execution deadline and frames readiness", integration, async (t) => {
+  const { cwd, events, environments } = await admissionFixture(t);
+  assert.equal((await environments.resolve({ sessionID: "a", cwd })).env.PROJECT_TEST, "a:default");
+  assert.deepEqual((await environments.list(cwd)).shells, ["default", "docs"]);
+  const requests = (await readFile(path.join(cwd, "admission-args"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(requests.length, 2, "both export and Nix catalog evaluation need admission");
+  for (const args of requests) {
+    assert.deepEqual(args.slice(0, 9), ["admission", "exec", "--contract", "nix-eval", "--queue", "--max-ram-usage", "1048576B", "--runtime-max-sec", args.includes("eval") ? "120" : "1"]);
+    assert.equal(args.includes("--timeout"), false, "no implicit queue deadline");
+    assert.match(args[args.indexOf("--ready-token") + 1], /^[a-z0-9-]{36}$/);
+  }
+  assert.deepEqual(events.filter(event => event.phase === "direnv export").map(event => event.status), ["waiting", "preparing", "ready"]);
+});
+
+test("native queued preparation cancellation awaits its owner and never enters", integration, async (t) => {
+  const { cwd, events, environments } = await admissionFixture(t);
+  const controller = new AbortController();
+  const pending = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: controller.signal }), { code: "EXECUTION_OUTCOME_UNKNOWN" });
+  let queued = false;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try { await readFile(path.join(cwd, "admission-args")); queued = true; break; } catch (error) { if (error.code !== "ENOENT") throw error; }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(queued);
+  controller.abort();
+  await pending;
+  assert.equal(await readFile(path.join(cwd, "admission-cleaned"), "utf8"), "yes");
+  assert.equal(events.some(event => event.phase === "direnv export" && event.status === "preparing"), false);
+});
+
+test("native preparation overflow waits without an execution process or deadline charge", integration, async (t) => {
+  let waiting;
+  const rejected = new Promise(resolve => { waiting = resolve; });
+  const f = await admissionFixture(t, { onProgress: event => {
+    if (event.reason === "submission capacity") waiting(event);
+  } });
+  await writeFile(f.amc, `#!${process.execPath}
+import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+const args = process.argv.slice(2);
+const token = args[args.indexOf("--ready-token") + 1];
+await appendFile("overflow-tokens", token + "\\n");
+if (!(await readFile("overflow-pid", "utf8").catch(() => ""))) {
+  await writeFile("overflow-pid", String(process.pid));
+  process.stderr.write("\\x1e" + token + ":backpressure:300\\x1f");
+  process.exit(75);
+}
+process.stderr.write("\\x1e" + token + "\\x1f");
+const payload = args.slice(args.indexOf("--") + 1);
+spawn(payload[0], payload.slice(1), { stdio: "inherit" }).on("exit", code => {
+  process.stderr.write("\\x1e" + token + ":complete:" + (code ?? 1) + "\\x1f", () => process.exit(code ?? 1));
+});
+`);
+  const prepared = f.environments.resolve({ sessionID: "overflow", cwd: f.cwd });
+  prepared.catch(() => {});
+  const progress = await Promise.race([rejected, prepared.then(() => null)]);
+  assert.equal(progress?.retryAfterMs, 300);
+  const pid = Number(await readFile(path.join(f.cwd, "overflow-pid"), "utf8"));
+  assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  assert.equal((await prepared).env.PROJECT_TEST, "a:default");
+  const tokens = (await readFile(path.join(f.cwd, "overflow-tokens"), "utf8")).trim().split("\n");
+  assert.equal(tokens.length, 2);
+  assert.equal(new Set(tokens).size, tokens.length, "every attempt needs a fresh token");
+});
+
+test("native overflow backoff remains cancellable and ambiguous frames never replay", integration, async (t) => {
+  const controller = new AbortController();
+  const f = await admissionFixture(t, { onProgress: event => {
+    if (event.reason === "submission capacity") controller.abort();
+  } });
+  const valid = '"\\x1e" + token + ":backpressure:300\\x1f"';
+  for (const [frame, output, code, signal] of [
+    [valid, "stderr", 75, controller.signal],
+    [valid, "stderr", 1],
+    [valid, "stdout", 75],
+    ['"\\x1ewrong-token:backpressure:300\\x1f"', "stderr", 75],
+    ['"\\x1e" + token + ":backpressure:0\\x1f"', "stderr", 75],
+    ['"\\x1e" + token + ":backpressure:60001\\x1f"', "stderr", 75],
+    ['"\\x1e" + token + "\\x1f" + ' + valid, "stderr", 75],
+  ]) {
+    await writeFile(f.amc, `#!${process.execPath}
+import { appendFile } from "node:fs/promises";
+const args = process.argv.slice(2);
+const token = args[args.indexOf("--ready-token") + 1];
+await appendFile("no-replay", "attempt\\n");
+process.${output}.write(${frame});
+process.exit(${code});
+`);
+    await writeFile(path.join(f.cwd, "no-replay"), "");
+    await assert.rejects(f.environments.resolve({ sessionID: "ambiguous", cwd: f.cwd, signal }), {
+      code: signal ? "CANCELLED" : "EXECUTION_OUTCOME_UNKNOWN",
+    });
+    assert.equal(await readFile(path.join(f.cwd, "no-replay"), "utf8"), "attempt\n");
+  }
+});
+
+test("unavailable native preparation admission never falls back to an unaccounted export", integration, async (t) => {
+  const { projects: [cwd], environments } = await fixture(t, {
+    preparationAdmission: { amc: "/missing/amc", contract: "nix-eval", memoryBytes: 1048576 },
+  });
+  await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: "EXECUTION_OUTCOME_UNKNOWN" });
+});
+
+test("a successful native client without entry evidence cannot return an environment", integration, async (t) => {
+  const { cwd, amc, environments } = await admissionFixture(t);
+  await writeFile(amc, `#!${process.execPath}\nprocess.stdout.write("{}");\n`);
+  await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: "EXECUTION_OUTCOME_UNKNOWN" });
+});
+
+test("native preparation requires a matching confirmed outcome after entry", integration, async (t) => {
+  const { cwd, amc, environments } = await admissionFixture(t);
+  const frames = ["", '"\\x1ewrong:complete:0\\x1f"', '"\\x1e" + token + ":complete:1\\x1f"',
+    '"\\x1e" + token + ":complete:0\\x1f\\x1e" + token + ":complete:0\\x1f"',
+    '"\\x1e" + token + ":complete:99999\\x1f\\x1e" + token + ":complete:0\\x1f"'];
+  for (const frame of frames) {
+    await writeFile(amc, `#!${process.execPath}
+import { appendFile } from "node:fs/promises";
+const args = process.argv.slice(2);
+const token = args[args.indexOf("--ready-token") + 1];
+await appendFile("unknown-preparation", "once\\n");
+process.stderr.write("\\x1e" + token + "\\x1f");
+${frame ? `process.stderr.write(${frame});` : ""}
+process.stdout.write("{}");
+`);
+    await assert.rejects(environments.resolve({ sessionID: "unknown", cwd }), error => {
+      assert.equal(error.code, "EXECUTION_OUTCOME_UNKNOWN");
+      assert.match(error.message, /Inspect native execution and any side effects before retrying/);
+      return true;
+    });
+  }
+  assert.equal(await readFile(path.join(cwd, "unknown-preparation"), "utf8"), "once\n".repeat(frames.length));
+});
+
+test("native preparation completion cannot precede entry", integration, async (t) => {
+  const { cwd, amc, environments } = await admissionFixture(t);
+  await writeFile(amc, `#!${process.execPath}
+const args = process.argv.slice(2);
+const token = args[args.indexOf("--ready-token") + 1];
+process.stderr.write("\\x1e" + token + ":complete:0\\x1f\\x1e" + token + "\\x1f");
+process.stdout.write("{}");
+`);
+  await assert.rejects(environments.resolve({ sessionID: "unknown", cwd }), { code: "EXECUTION_OUTCOME_UNKNOWN" });
+});
+
+test("real AMC admits export and catalog evaluation and cleans up cancelled preparation", {
+  skip: !direnv || !nix || !process.env.AMC_BIN || !process.env.AMC_TEST_SLICE,
+  timeout: 60_000,
+}, async (t) => {
+  const { projects, baseline } = await fixture(t);
+  const cwd = projects[0];
+  const runtime = baseline.XDG_RUNTIME_DIR;
+  // A private fixture broker, not the operator's admission state or policy.
+  // systemctl uses the real manager's runtime directory, not a relocated bus.
+  baseline.XDG_RUNTIME_DIR = process.env.XDG_RUNTIME_DIR;
+  baseline.DBUS_SESSION_BUS_ADDRESS = `unix:path=/run/user/${process.getuid()}/bus`;
+  const manager = await exec("systemctl", ["--user", "show", process.env.AMC_TEST_SLICE,
+    "--property=LoadState,ActiveState,ControlGroup"], { env: baseline });
+  assert.match(manager.stdout, /^ActiveState=active$/m);
+  const socket = path.join(runtime, "amc/admission.sock");
+  baseline.AMC_FIXTURE_SOCKET = socket;
+  const amc = path.join(runtime, "native-amc");
+  // exec preserves AMC's signal/cleanup ownership; only the test socket differs.
+  await writeFile(amc, '#!/bin/sh\nshift 2\nexec "$AMC_BIN" admission exec --socket "$AMC_FIXTURE_SOCKET" "$@"\n', { mode: 0o700 });
+  const policy = path.join(runtime, "admission-policy.json");
+  await writeFile(policy, JSON.stringify({ version: 1, budget_bytes: 512 * 1048576, reserve_bytes: 1048576,
+    queue_limit: 4, contracts: { "nix-eval": { slice: process.env.AMC_TEST_SLICE, memory_max: 512 * 1048576,
+      memory_swap_max: 0, max_running: 1, pause_file: null } } }));
+  const server = spawn(process.env.AMC_BIN, ["admission", "serve", "--policy", policy, "--socket", socket,
+    "--state", path.join(runtime, "admission-state")], { env: baseline, stdio: ["ignore", "ignore", "pipe"] });
+  let diagnostic = "";
+  server.stderr.on("data", chunk => { diagnostic = (diagnostic + chunk).slice(-4096); });
+  const closed = new Promise(resolve => server.once("close", resolve));
+  t.after(async () => { server.kill("SIGTERM"); await closed; });
+  const status = async () => JSON.parse((await exec(process.env.AMC_BIN, ["admission", "status", "--socket", socket, "--json"], { env: baseline })).stdout);
+  async function wait(check) {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      assert.equal(server.exitCode, null, diagnostic);
+      if (await check()) return;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.fail("native preparation condition did not become true");
+  }
+  await wait(async () => { try { await stat(socket); return true; } catch (error) { if (error.code !== "ENOENT") throw error; return false; } });
+  const deadline = AbortSignal.timeout(15_000);
+  const environments = createProjectEnvironments({ roots: projects, baseline, direnv, nix,
+    system: process.arch === "arm64" ? "aarch64-linux" : "x86_64-linux", preparationTimeoutMs: 5000,
+    preparationAdmission: { amc, contract: "nix-eval", memoryBytes: 512 * 1048576 } });
+  const snapshot = await environments.resolve({ sessionID: "a", cwd, signal: deadline }).catch(async error => {
+    t.diagnostic(JSON.stringify(await status()));
+    throw error;
+  });
+  assert.equal(snapshot.env.PROJECT_TEST, "a:default");
+  assert.deepEqual((await environments.list(cwd, deadline)).shells, ["default", "docs"]);
+  await wait(async () => (await status()).entries.length === 0);
+  await writeFile(path.join(cwd, ".envrc"), "touch native-preparation-entered\nsleep 60\ntouch native-must-not-complete\n");
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const pending = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: AbortSignal.any([controller.signal, deadline]) }), { code: "EXECUTION_OUTCOME_UNKNOWN" });
+  await wait(async () => { try { await stat(path.join(cwd, "native-preparation-entered")); return true; } catch (error) { if (error.code !== "ENOENT") throw error; return false; } });
+  controller.abort();
+  await pending;
+  await wait(async () => (await status()).entries.length === 0);
+  await assert.rejects(stat(path.join(cwd, "native-must-not-complete")), { code: "ENOENT" });
 });
 
 test("bootstrap is explicitly configured and never invokes project executables", async (t) => {
@@ -117,6 +360,34 @@ test("bootstrap repair bypasses a held project preparation queue", { timeout: 10
   assert.equal(await barrier.resolve({ sessionID: "a", cwd: "/fixture", environment: "bootstrap" }), "repair-ready");
   finish.resolve("project-ready");
   assert.equal(await pending, "project-ready");
+});
+
+test("cancelling active preparation waits for its producer cleanup", { timeout: 3000 }, async (t) => {
+  const entered = Promise.withResolvers();
+  const cleaning = Promise.withResolvers();
+  const cleaned = Promise.withResolvers();
+  const barrier = createEnvironmentBarrier({ environments: {
+    async resolve({ signal }) {
+      entered.resolve();
+      await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+      cleaning.resolve();
+      await cleaned.promise;
+      throw signal.reason;
+    },
+    release() {},
+  } });
+  t.after(async () => { cleaned.resolve(); await barrier.dispose(); });
+  const controller = new AbortController();
+  let settled = false;
+  const pending = assert.rejects(barrier.resolve({ sessionID: "a", cwd: "/fixture", signal: controller.signal }), { name: "AbortError" })
+    .then(() => { settled = true; });
+  await entered.promise;
+  controller.abort();
+  await cleaning.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, "cancellation is not a producer cleanup receipt");
+  cleaned.resolve();
+  await pending;
 });
 
 test("native Nix lock drift can be repaired through bootstrap before project execution resumes", integration, async (t) => {
@@ -255,7 +526,8 @@ test("concurrent sessions share one export and cancellation leaves other waiters
 });
 
 test("cancelling an active export is reported as cancellation, not timeout", integration, async (t) => {
-  const { projects: [cwd], environments } = await fixture(t, { direnvApproval: "auto", preparationTimeoutMs: 5000 });
+  const events = [];
+  const { projects: [cwd], environments } = await fixture(t, { direnvApproval: "auto", preparationTimeoutMs: 5000, onProgress: event => events.push(event) });
   await writeFile(path.join(cwd, ".envrc"), `echo started > ${JSON.stringify(path.join(cwd, "started"))}\nsleep 30\n`);
   const controller = new AbortController();
   const rejected = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: controller.signal }), (error) => {
@@ -273,6 +545,7 @@ test("cancelling an active export is reported as cancellation, not timeout", int
   controller.abort();
   await rejected;
   assert.equal(started, true);
+  assert.ok(events.some(event => event.phase === "direnv export" && event.status === "failed"), "the final waiter must await producer cleanup");
 });
 
 test("watched symlinks use direnv's target timestamp", integration, async (t) => {

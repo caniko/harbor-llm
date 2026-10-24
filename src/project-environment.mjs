@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { inflateSync } from "node:zlib";
 import path from "node:path";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 
 const exec = promisify(execFile);
 // Only in-flight exports are shared. Completed environments remain owned by
@@ -73,7 +74,7 @@ async function sharedPreparation(key, signal, prepare, onJoin) {
     state.promise = Promise.resolve().then(() => prepare(controller.signal, state.id)).finally(() => {
       if (preparations.get(key) === state) preparations.delete(key);
     });
-    // The final waiter can leave before subprocess cleanup finishes.
+    // Observe failures even when every waiter has been cancelled.
     state.promise.catch(() => {});
     preparations.set(key, state);
   }
@@ -96,6 +97,7 @@ async function sharedPreparation(key, signal, prepare, onJoin) {
     if (--state.waiters === 0) {
       if (preparations.get(key) === state) preparations.delete(key);
       state.controller.abort();
+      await state.promise.catch(error => { if (error.code === "EXECUTION_OUTCOME_UNKNOWN") throw error; });
     }
   }
 }
@@ -126,9 +128,16 @@ const OUTSIDE_ROOTS = "Working directory is outside configured project roots";
 const SELECTION_NEEDS_ENVRC = "Shell selection requires a project .envrc inside the configured roots";
 const SELECTION_NEEDS_LOCAL_ENVRC = "Shell selection requires a .envrc inside the selected flake root; inherited ancestor environments do not apply to explicit selection";
 
+function confirmedOutcome(stderr, token, code) {
+  if (!Number.isInteger(code) || code < 0 || code > 255) return false;
+  const frames = (stderr ?? "").match(new RegExp(`\x1e${token}:complete:[0-9]{1,5}\x1f`, "g")) ?? [];
+  return frames.length === 1 && frames[0] === `\x1e${token}:complete:${code}\x1f`
+    && stderr.indexOf(frames[0]) > stderr.indexOf(`\x1e${token}\x1f`);
+}
+
 // Selection metadata only. Every launch asks direnv to evaluate from the
 // same baseline; nix-direnv owns its build cache and watch invalidation.
-export function createProjectEnvironments({ roots, direnv, nix, system, baseline, bootstrapEnvironment, consistencyLocks = {}, preparationLockDirectory, direnvApproval = "auto", preparationTimeoutMs = 600_000, onProgress, setsid = "setsid", flock = "flock" }) {
+export function createProjectEnvironments({ roots, direnv, nix, system, baseline, bootstrapEnvironment, consistencyLocks = {}, preparationLockDirectory, direnvApproval = "auto", preparationTimeoutMs = 600_000, preparationAdmission, onProgress, setsid = "setsid", flock = "flock" }) {
   if (!["auto", "manual"].includes(direnvApproval)) throw new Error("direnvApproval must be auto or manual");
   if (!Number.isSafeInteger(preparationTimeoutMs) || preparationTimeoutMs <= 0 || preparationTimeoutMs > 3_600_000) {
     throw new Error("preparationTimeoutMs must be a positive integer no greater than 3600000");
@@ -138,6 +147,15 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
   }
   if (preparationLockDirectory !== undefined && (typeof preparationLockDirectory !== "string" || !path.isAbsolute(preparationLockDirectory))) {
     throw new Error("preparationLockDirectory must be an absolute path");
+  }
+  if (preparationAdmission !== undefined) {
+    if (process.platform !== "linux" || !preparationAdmission || typeof preparationAdmission !== "object" || Array.isArray(preparationAdmission)
+      || typeof preparationAdmission.amc !== "string" || !path.isAbsolute(preparationAdmission.amc) || preparationAdmission.amc.includes("\0")
+      || typeof preparationAdmission.contract !== "string" || !/^[a-zA-Z0-9_.-]{1,64}$/.test(preparationAdmission.contract)
+      || !Number.isSafeInteger(preparationAdmission.memoryBytes) || preparationAdmission.memoryBytes <= 0 || preparationAdmission.memoryBytes % 4096 !== 0) {
+      throw new Error("preparationAdmission requires an absolute AMC executable, contract and positive 4096-byte-aligned memoryBytes on Linux");
+    }
+    preparationAdmission = Object.freeze({ ...preparationAdmission });
   }
   const selections = new Map();
   const blocked = new Map();
@@ -176,28 +194,79 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     const progress = { preparationID: randomUUID(), phase: `${path.basename(binary)} ${args[0]}`, cwd, timeoutMs, ...detail };
     const started = performance.now();
     const deadline = new AbortController();
+    const admitted = preparationAdmission && ["export", "eval"].includes(args[0]);
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; deadline.abort(); }, timeoutMs);
+    let unresolved = false;
+    let timer;
+    const startDeadline = () => { timer = setTimeout(() => { timedOut = true; deadline.abort(); }, timeoutMs); };
+    if (!admitted) startDeadline();
     const combined = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
     let child, closed;
+    const cancel = () => child?.kill("SIGTERM");
     try {
-      combined.throwIfAborted();
-      onProgress?.({ ...progress, status: "preparing" });
-      // execFile does not forward a `detached` option. Linux setsid gives
-      // this preparation its own process group while retaining stdlib limits.
-      const grouped = process.platform === "linux";
-      const invocation = detail.lock ? [flock, "--exclusive", detail.lock, binary, ...args] : [binary, ...args];
-      const guarded = detail.readLock ? [flock, "--shared", detail.readLock, ...invocation] : invocation;
-      const execution = exec(grouped ? setsid : guarded[0], grouped ? ["--", ...guarded] : guarded.slice(1), { cwd, env, signal: combined, maxBuffer: 8 * 1024 * 1024 });
-      child = execution.child;
-      closed = new Promise((resolve) => child.once("close", resolve));
-      const result = await execution;
-      onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
-      return result.stdout;
+      for (;;) {
+        combined.throwIfAborted();
+        const readyToken = admitted ? randomUUID() : undefined;
+        onProgress?.({ ...progress, status: admitted ? "waiting" : "preparing" });
+        // execFile does not forward a `detached` option. Linux setsid gives
+        // this preparation its own process group while retaining stdlib limits.
+        const grouped = process.platform === "linux";
+        const invocation = detail.lock ? [flock, "--exclusive", detail.lock, binary, ...args] : [binary, ...args];
+        const guarded = detail.readLock ? [flock, "--shared", detail.readLock, ...invocation] : invocation;
+        const command = admitted ? [preparationAdmission.amc, "admission", "exec", "--contract", preparationAdmission.contract,
+          "--queue", "--max-ram-usage", `${preparationAdmission.memoryBytes}B`, "--runtime-max-sec", String(Math.ceil(timeoutMs / 1000)),
+          "--ready-token", readyToken, "--", ...guarded] : guarded;
+        // AMC owns native cancellation and descendant cleanup. Signal its client
+        // without execFile's early AbortError or a process-group SIGKILL.
+        const execution = exec(grouped ? setsid : command[0], grouped ? ["--", ...command] : command.slice(1), { cwd, env, ...(admitted ? {} : { signal: combined }), maxBuffer: 8 * 1024 * 1024 });
+        child = execution.child;
+        closed = new Promise((resolve) => child.once("close", resolve));
+        let entered = !admitted;
+        if (admitted) {
+          combined.addEventListener("abort", cancel, { once: true });
+          if (combined.aborted) cancel();
+          const frame = `\x1e${readyToken}\x1f`;
+          let pending = "";
+          child.stderr.on("data", chunk => {
+            if (entered) return;
+            pending += chunk.toString("latin1");
+            if (!pending.includes(frame)) { pending = pending.slice(-(frame.length - 1)); return; }
+            entered = true;
+            startDeadline();
+            onProgress?.({ ...progress, status: "preparing", waitMs: Math.round(performance.now() - started) });
+          });
+        }
+        const result = await execution.catch(error => {
+          // Only a complete, token-bound nonacceptance frame plus exit 75 proves
+          // that no preparation was dispatched. Never replay an ambiguous failure.
+          const frame = admitted && !entered && error.code === 75 && error.stdout === ""
+            ? error.stderr?.match(/^\x1e([a-zA-Z0-9-]+):backpressure:([0-9]{1,5})\x1f$/) : null;
+          if (frame && frame[1] === readyToken && Number(frame[2]) > 0 && Number(frame[2]) <= 60000)
+            return { retryAfterMs: Number(frame[2]) };
+          unresolved = Boolean(admitted && child?.pid && (!entered || !confirmedOutcome(error.stderr, readyToken, error.code)));
+          throw error;
+        });
+        if ("retryAfterMs" in result) {
+          await closed;
+          combined.removeEventListener("abort", cancel);
+          child = closed = undefined;
+          combined.throwIfAborted();
+          onProgress?.({ ...progress, status: "waiting", reason: "submission capacity", retryAfterMs: result.retryAfterMs });
+          await delay(result.retryAfterMs, undefined, { signal: combined });
+          continue;
+        }
+        if (admitted && (!entered || !confirmedOutcome(result.stderr, readyToken, 0))) {
+          unresolved = true;
+          throw new Error("Native preparation outcome was not confirmed");
+        }
+        combined.throwIfAborted();
+        onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
+        return result.stdout;
+      }
     } catch (error) {
       // A timed-out direnv can leave its bash/Nix children alive. Reap this
       // preparation's private process group, never the caller's running jobs.
-      if (child?.pid) {
+      if (child?.pid && !admitted) {
         try { process.kill(process.platform === "linux" ? -child.pid : child.pid, "SIGKILL"); }
         catch (killError) { if (killError.code !== "ESRCH") throw new Error("Cannot terminate failed environment preparation"); }
       }
@@ -205,17 +274,18 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       // Hook output can contain credentials. Never forward stdout/stderr.
       const lockDrift = !signal?.aborted && !timedOut
         && /requires lock file changes but they're not allowed/.test(error.stderr ?? "");
-      const reason = signal?.aborted ? "cancelled" : timedOut ? "timeout" : lockDrift ? "lock file changes required"
+      const reason = unresolved ? `execution outcome is unknown${signal?.aborted ? " (cancelled)" : timedOut ? " (timeout)" : ""}` : signal?.aborted ? "cancelled" : timedOut ? "timeout" : lockDrift ? "lock file changes required"
         : error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "output limit exceeded"
           : error.signal ? `terminated by ${error.signal}` : `exit ${error.code ?? "unknown"}`;
       const result = { ...progress, status: "failed", reason, elapsedMs: Math.round(performance.now() - started) };
       onProgress?.(result);
-      const failure = new Error(`Project environment preparation failed: ${result.phase}; cwd=${cwd}; envrc=${detail.envrc ?? "not yet resolved"}; approval=${detail.approval ?? "not yet checked"}; ${reason}; elapsed=${result.elapsedMs}ms; limit=${timeoutMs}ms; preparation=${progress.preparationID}`);
-      failure.code = signal?.aborted ? "CANCELLED" : timedOut ? "TIMEOUT" : lockDrift ? "LOCK_DRIFT" : "PREPARATION_FAILED";
+      const failure = new Error(`Project environment preparation failed: ${result.phase}; cwd=${cwd}; envrc=${detail.envrc ?? "not yet resolved"}; approval=${detail.approval ?? "not yet checked"}; ${reason}; elapsed=${result.elapsedMs}ms; limit=${timeoutMs}ms; preparation=${progress.preparationID}${unresolved ? "; Inspect native execution and any side effects before retrying" : ""}`);
+      failure.code = unresolved ? "EXECUTION_OUTCOME_UNKNOWN" : signal?.aborted ? "CANCELLED" : timedOut ? "TIMEOUT" : lockDrift ? "LOCK_DRIFT" : "PREPARATION_FAILED";
       failure.preparation = result;
       throw failure;
     } finally {
       clearTimeout(timer);
+      combined.removeEventListener("abort", cancel);
     }
   }
   // `root` and `boundary` answer different questions: the nearest flake owns
@@ -331,7 +401,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     const generation = await definitionGeneration();
     const identity = createHash("sha256").update(JSON.stringify([
       project.cwd, project.boundary, envrc, hash, generation, shell, system, direnv, nix,
-      preparationTimeoutMs, readLock, setsid, flock, Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),
+      preparationTimeoutMs, preparationAdmission, readLock, setsid, flock, Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),
     ])).digest("hex");
     if (retry) blocked.delete(identity);
     const previous = blocked.get(identity);
@@ -358,7 +428,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       // approval into the same barrier; preserve unrelated evaluation errors.
       // Recovery keeps the selection restriction so a vanishing local .envrc
       // can never prompt for or auto-allow an ancestor on selection's behalf.
-      if (error.code === "CANCELLED" || error.code === "TIMEOUT") throw error;
+      if (["CANCELLED", "TIMEOUT", "EXECUTION_OUTCOME_UNKNOWN"].includes(error.code)) throw error;
       if (error.code === "LOCK_DRIFT" && await definitionGeneration() === generation) {
         if (blocked.size >= 128) blocked.delete(blocked.keys().next().value);
         blocked.set(identity, { message: error.message, preparation: error.preparation });
@@ -446,7 +516,9 @@ export function createEnvironmentBarrier({ environments, requestApproval }) {
     signal.throwIfAborted();
     // Repair must remain available while a project preparation is waiting.
     if (operation === "resolve" && input.environment === "bootstrap") return environments.resolve({ ...input, signal });
+    let active = false;
     const work = state.tail.catch(() => {}).then(async () => {
+      active = true;
       for (;;) {
         signal.throwIfAborted();
         try {
@@ -469,12 +541,12 @@ export function createEnvironmentBarrier({ environments, requestApproval }) {
       }
     });
     state.tail = work;
-    // Keep queue ownership until work finishes, while a cancelled queued
-    // caller settles promptly and never starts after its predecessor finishes.
+    // Queued cancellation is prompt. Once preparation starts, its producer
+    // owns cancellation completion, including subprocess cleanup.
     let abort;
     try {
       return await Promise.race([work, new Promise((_, reject) => {
-        abort = () => reject(signal.reason);
+        abort = () => { if (!active) reject(signal.reason); };
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
       })]);
