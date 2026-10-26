@@ -1,0 +1,124 @@
+{
+  "rejectionCodeDefault": "invalid-frame",
+  "messages": {
+    "describe": {
+      "schemaVersion": 1,
+      "requestId": "request-1",
+      "body": {"kind": "describe", "requiredProfile": "linux-untrusted-review", "expectedImplementation": {
+        "engineRevision": "0000000000000000000000000000000000000000",
+        "engineDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "bridgeDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+        "schemaDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "configurationDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+        "credentialReferenceDigest": "5555555555555555555555555555555555555555555555555555555555555555"
+      }}
+    },
+    "capabilities": {
+      "schemaVersion": 1,
+      "requestId": "request-1",
+      "body": {
+        "kind": "capabilities",
+        "implementation": {
+          "engineRevision": "0000000000000000000000000000000000000000",
+          "engineDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+          "bridgeDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "schemaDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "configurationDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "credentialReferenceDigest": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        "profiles": ["linux-untrusted-review", "linux-managed-paperclip", "macos-managed-paperclip"],
+        "capabilities": ["authenticated-ipc", "durable-intents", "zero-effect-reopen", "descendant-cleanup", "retained-delivery"]
+      }
+    },
+    "observation": {
+      "schemaVersion": 1,
+      "requestId": "request-1",
+      "body": {
+        "kind": "observation",
+        "binding": {
+          "callerAuthority": "application-controller-1",
+          "callerNamespace": "tenant-1",
+          "intentId": "intent-1",
+          "executionId": "execution-1",
+          "executionGeneration": "18446744073709551615",
+          "inputDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "policyDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "implementationDigest": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "handle": "runtime-1",
+        "state": "unknown",
+        "sequence": "9007199254740993",
+        "gap": true
+      }
+    },
+    "error": {"schemaVersion": 1, "requestId": "request-1", "body": {"kind": "error", "code": "effect-unknown"}},
+    "output-receipt": {
+      "schemaVersion": 1,
+      "requestId": "request-1",
+      "body": {
+        "kind": "output-receipt",
+        "binding": {
+          "callerAuthority": "application-controller-1",
+          "callerNamespace": "tenant-1",
+          "intentId": "intent-1",
+          "executionId": "execution-1",
+          "executionGeneration": "18446744073709551615",
+          "inputDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "policyDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "implementationDigest": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "outputDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "outputBytes": "18446744073709551615"
+      }
+    }
+  },
+  "cases": [
+    {"name": "describe", "base": "describe", "accepted": true},
+    {"name": "retained-output-receipt", "base": "output-receipt", "accepted": true},
+    {"name": "output-byte-count-must-preserve-precision", "base": "output-receipt", "changes": {"body.outputBytes": 9007199254740992}, "accepted": false},
+    {"name": "capabilities", "base": "capabilities", "accepted": true},
+    {"name": "maximum-u64-generation-and-js-unsafe-sequence", "base": "observation", "accepted": true},
+    {"name": "unknown-remains-an-observation", "base": "error", "accepted": true},
+    {"name": "unicode-identities-preserve-bytes", "base": "describe", "changes": {"requestId": "request-🧪"}, "accepted": true},
+    {"name": "unsupported-profile-is-describable", "base": "describe", "changes": {"body.requiredProfile": "macos-untrusted-review"}, "accepted": true},
+    {"name": "missing-version", "base": "describe", "remove": "schemaVersion", "accepted": false, "code": "incompatible-version"},
+    {"name": "null-version", "base": "describe", "changes": {"schemaVersion": null}, "accepted": false, "code": "incompatible-version"},
+    {"name": "future-version", "base": "describe", "changes": {"schemaVersion": 2}, "accepted": false, "code": "incompatible-version"},
+    {"name": "unknown-envelope-field", "base": "describe", "changes": {"authorization": true}, "accepted": false},
+    {"name": "unknown-operation", "base": "describe", "changes": {"body.kind": "start"}, "accepted": false},
+    {"name": "unknown-body-field", "base": "describe", "changes": {"body.authorized": true}, "accepted": false},
+    {"name": "missing-request-id", "base": "describe", "remove": "requestId", "accepted": false},
+    {"name": "null-request-id", "base": "describe", "changes": {"requestId": null}, "accepted": false},
+    {"name": "empty-request-id", "base": "describe", "changes": {"requestId": ""}, "accepted": false},
+    {"name": "control-character-id", "base": "describe", "changes": {"requestId": "request\n1"}, "accepted": false},
+    {"name": "c1-control-character-id", "base": "describe", "changes": {"requestId": "request\u00851"}, "accepted": false},
+    {"name": "numeric-generation", "base": "observation", "changes": {"body.binding.executionGeneration": 9007199254740992}, "accepted": false},
+    {"name": "zero-generation", "base": "observation", "changes": {"body.binding.executionGeneration": "0"}, "accepted": false},
+    {"name": "leading-zero-counter", "base": "observation", "changes": {"body.sequence": "01"}, "accepted": false},
+    {"name": "negative-counter", "base": "observation", "changes": {"body.sequence": "-1"}, "accepted": false},
+    {"name": "overflow-counter", "base": "observation", "changes": {"body.sequence": "18446744073709551616"}, "accepted": false},
+    {"name": "counter-null", "base": "observation", "changes": {"body.sequence": null}, "accepted": false},
+    {"name": "zero-sequence", "base": "observation", "changes": {"body.sequence": "0"}, "accepted": true},
+    {"name": "idle-is-not-completion", "base": "observation", "changes": {"body.state": "idle"}, "accepted": false},
+    {"name": "missing-gap", "base": "observation", "remove": "body.gap", "accepted": false},
+    {"name": "uppercase-digest", "base": "observation", "changes": {"body.binding.inputDigest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}, "accepted": false},
+    {"name": "short-revision", "base": "capabilities", "changes": {"body.implementation.engineRevision": "047c74e"}, "accepted": false},
+    {"name": "duplicate-capabilities", "base": "capabilities", "changes": {"body.capabilities": ["zero-effect-reopen", "zero-effect-reopen"]}, "accepted": false},
+    {"name": "unknown-capability", "base": "capabilities", "changes": {"body.capabilities": ["automatic-restart"]}, "accepted": false},
+    {"name": "duplicate-profiles", "base": "capabilities", "changes": {"body.profiles": ["linux-untrusted-review", "linux-untrusted-review"]}, "accepted": false},
+    {"name": "credentials-are-not-error-payloads", "base": "error", "changes": {"body.secret": "synthetic-secret"}, "accepted": false},
+    {"name": "duplicate-key", "raw": "{\"body\":{\"kind\":\"describe\",\"requiredProfile\":\"linux-untrusted-review\"},\"requestId\":\"request-1\",\"requestId\":\"request-1\",\"schemaVersion\":1}", "accepted": false},
+    {"name": "alternate-unicode-encoding", "raw": "{\"body\":{\"kind\":\"describe\",\"requiredProfile\":\"linux-untrusted-review\"},\"requestId\":\"request-\\u0031\",\"schemaVersion\":1}", "accepted": false},
+    {"name": "unpaired-surrogate", "raw": "{\"body\":{\"kind\":\"describe\",\"requiredProfile\":\"linux-untrusted-review\"},\"requestId\":\"\\ud800\",\"schemaVersion\":1}", "accepted": false},
+    {"name": "wrong-top-level-shape", "raw": "[]", "accepted": false, "code": "incompatible-version"},
+    {"name": "trailing-document", "raw": "{}{}", "accepted": false},
+    {"name": "malformed-json", "raw": "{", "accepted": false},
+    {"name": "utf8-bom-prefix", "raw": "\ufeff{\"body\":{\"code\":\"effect-unknown\",\"kind\":\"error\"},\"requestId\":\"request-1\",\"schemaVersion\":1}", "accepted": false},
+    {"name": "floating-version", "raw": "{\"schemaVersion\":1.0}", "accepted": false},
+    {"name": "unsafe-json-integer", "raw": "{\"schemaVersion\":9007199254740993}", "accepted": false},
+    {"name": "negative-version", "raw": "{\"schemaVersion\":-1}", "accepted": false},
+    {"name": "exponential-version", "raw": "{\"schemaVersion\":1e0}", "accepted": false},
+    {"name": "maximum-u32-future-version", "base": "describe", "changes": {"schemaVersion": 4294967295}, "accepted": false, "code": "incompatible-version"},
+    {"name": "u32-version-overflow", "base": "describe", "changes": {"schemaVersion": 4294967296}, "accepted": false}
+  ]
+}

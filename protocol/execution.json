@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "maxFrameBytes": 65536,
+  "maxJsonInteger": 4294967295,
+  "definitions": {
+    "Id": {"type": "string", "format": "opaque", "maxBytes": 256},
+    "Digest": {"type": "string", "format": "sha256"},
+    "Revision": {"type": "string", "format": "git-revision"},
+    "Counter": {"type": "string", "format": "uint64"},
+    "Generation": {"type": "string", "format": "generation"},
+    "Profile": {"enum": ["linux-untrusted-review", "linux-managed-paperclip", "macos-managed-paperclip", "macos-untrusted-review"]},
+    "Capability": {"enum": ["authenticated-ipc", "durable-intents", "zero-effect-reopen", "descendant-cleanup", "retained-delivery", "live-observation", "persisted-reconciliation"]},
+    "ExecutionState": {"enum": ["prepared", "starting", "unknown", "running", "retained", "closed"]},
+    "ErrorCode": {"enum": ["invalid-frame", "incompatible-version", "unsupported-profile", "unsupported-capability", "authority-denied", "custody-lost", "budget-exhausted", "transport-failed", "effect-unknown"]},
+    "Implementation": {"fields": {"engineRevision": "Revision", "engineDigest": "Digest", "bridgeDigest": "Digest", "schemaDigest": "Digest", "configurationDigest": "Digest", "credentialReferenceDigest": "Digest"}},
+    "Binding": {"fields": {"callerAuthority": "Id", "callerNamespace": "Id", "intentId": "Id", "executionId": "Id", "executionGeneration": "Generation", "inputDigest": "Digest", "policyDigest": "Digest", "implementationDigest": "Digest"}},
+    "Describe": {"fields": {"expectedImplementation": "Implementation", "requiredProfile": "Profile"}},
+    "Capabilities": {"fields": {"implementation": "Implementation", "profiles": {"items": "Profile", "maxItems": 4, "unique": true}, "capabilities": {"items": "Capability", "maxItems": 7, "unique": true}}},
+    "Observation": {"fields": {"binding": "Binding", "handle": "Id", "state": "ExecutionState", "sequence": "Counter", "gap": "bool"}},
+    "OutputReceipt": {"fields": {"binding": "Binding", "outputDigest": "Digest", "outputBytes": "Counter"}},
+    "Failure": {"fields": {"code": "ErrorCode"}},
+    "Body": {"tag": "kind", "variants": {"describe": "Describe", "capabilities": "Capabilities", "observation": "Observation", "output-receipt": "OutputReceipt", "error": "Failure"}},
+    "Message": {"fields": {"schemaVersion": {"const": 1}, "requestId": "Id", "body": "Body"}}
+  },
+  "root": "Message"
+}

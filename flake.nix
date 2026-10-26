@@ -2,26 +2,89 @@
   description = "Generic LLM harness integrations and project-scoped environments";
 
   inputs = {
-    harbor-meta.url = "git+https://github.com/caniko/harbor-meta.git?ref=feat/shared-timezone-env&rev=1f272a44dea9dc531b30efb384720ddb46f083e3";
+    harbor-meta.url = "github:caniko/harbor-meta";
     nixpkgs.follows = "harbor-meta/nixpkgs";
+    harbor-rs = {
+      url = "github:caniko/harbor-rs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.harbor-meta.follows = "harbor-meta";
+    };
   };
 
   outputs = {
     self,
     nixpkgs,
     harbor-meta,
+    harbor-rs,
+    ...
   }: let
     forSystems = nixpkgs.lib.genAttrs ["x86_64-linux" "aarch64-linux"];
   in {
     lib.timezone = harbor-meta.lib.timezone;
     lib.environmentContractVersion = 1;
+    lib.preparationAdmissionVersion = 2;
+    lib.preparationBackpressureVersion = 1;
     homeManagerModules.default = import ./nix/home.nix self;
+    nixosModules.custodian = {
+      lib,
+      pkgs,
+      ...
+    }: {
+      imports = [./nix/custodian.nix];
+      services.harbor-llm-custodian.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.custodian;
+    };
     packages = forSystems (system: let
       pkgs = nixpkgs.legacyPackages.${system};
+      rustPkgs = import nixpkgs {
+        inherit system;
+        overlays = [(import harbor-rs.inputs.rust-overlay)];
+      };
+      inherit
+        (harbor-rs.lib.mkToolchain {
+          pkgs = rustPkgs;
+          toolchainProfile = "stable";
+          cache.enable = false;
+        })
+        craneLib
+        ;
+      custodianArgs = {
+        pname = "harbor-llm-custodian";
+        version = "0.1.0";
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          name = "harbor-llm-custodian-source";
+          filter = path: type:
+            craneLib.filterCargoSources path type
+            || pkgs.lib.hasPrefix "${toString ./.}/protocol/" path
+            # rust/protocol links to the shared protocol directory.
+            || builtins.elem path ["${toString ./.}/rust/README.md" "${toString ./.}/rust/protocol"]
+            || builtins.elem path ["${toString ./.}/runtime/src/standalone.mjs" "${toString ./.}/runtime/src/native_observer.mjs"];
+        };
+        strictDeps = true;
+        cargoExtraArgs = "--locked -p harbor-llm-runtime --bin harbor-llm-custodian --bin harbor-llm-standalone";
+        # Receipt/admission authority must not run through a caller-owned loader.
+        CARGO_BUILD_TARGET = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+        RUSTFLAGS = "-C target-feature=+crt-static -L native=${pkgs.glibc.static}/lib";
+      };
     in {
+      custodian = craneLib.buildPackage (custodianArgs
+        // {
+          cargoArtifacts = craneLib.buildDepsOnly custodianArgs;
+          doCheck = false;
+          meta = {
+            description = "Harbor LLM preparation custodian and experimental Linux namespace setup";
+            license = pkgs.lib.licenses.mit;
+            mainProgram = "harbor-llm-custodian";
+            platforms = pkgs.lib.platforms.linux;
+          };
+        });
       default = pkgs.stdenvNoCC.mkDerivation {
         pname = "harbor-llm";
         version = "0.1.0";
+        passthru = {
+          preparationAdmissionVersion = 2;
+          preparationBackpressureVersion = 1;
+        };
         src = builtins.path {
           path = ./.;
           name = "harbor-llm-source";
@@ -31,7 +94,7 @@
         npmDeps = pkgs.importNpmLock {npmRoot = ./.;};
         installPhase = ''
           mkdir -p $out/lib/harbor-llm
-          cp -r src plugins node_modules package.json $out/lib/harbor-llm/
+          cp -r src plugins contracts protocol python node_modules package.json $out/lib/harbor-llm/
         '';
       };
     });
@@ -46,15 +109,20 @@
     checks = forSystems (system: let
       pkgs = nixpkgs.legacyPackages.${system};
     in {
-      environments = pkgs.runCommand "harbor-llm-environments" {nativeBuildInputs = [pkgs.nodejs pkgs.util-linux pkgs.gnutar];} ''
+      environments = pkgs.runCommand "harbor-llm-environments" {nativeBuildInputs = [pkgs.nodejs pkgs.python3 pkgs.util-linux pkgs.gnutar];} ''
         cp -r ${./src} src
         cp -r ${./test} test
+        cp -r ${./contracts} contracts
+        cp -r ${./protocol} protocol
+        cp -r ${./python} python
+        cp ${./package.json} package.json
         ln -s ${self.packages.${system}.default}/lib/harbor-llm/node_modules node_modules
         export HOME="$PWD/test-home"
         export XDG_RUNTIME_DIR="$PWD/test-runtime"
         mkdir -m 700 "$HOME" "$XDG_RUNTIME_DIR"
         DIRENV_BIN=${pkgs.direnv}/bin/direnv NIX_BIN=${pkgs.nix}/bin/nix \
           node --test test/*.test.mjs
+        python3 -I test/test_mcp_admission.py
         touch $out
       '';
       plugin = pkgs.runCommand "harbor-llm-plugin" {nativeBuildInputs = [pkgs.nodejs];} ''
@@ -73,6 +141,11 @@
       module = import ./test/home-module.nix {
         inherit pkgs self;
       };
+      custodian-module = import ./test/custodian-module.nix {
+        inherit pkgs;
+        module = self.nixosModules.custodian;
+      };
+      custodian-package = self.packages.${system}.custodian;
       formatting = pkgs.runCommand "harbor-llm-formatting" {nativeBuildInputs = [pkgs.treefmt pkgs.alejandra];} ''
         cp -r ${self} source
         chmod -R u+w source

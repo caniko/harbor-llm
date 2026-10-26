@@ -4,3 +4,5 @@ node_modules/
 graphify-out/
 .direnv/
 .nix-results/
+target/
+__pycache__/
