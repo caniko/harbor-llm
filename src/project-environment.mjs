@@ -468,14 +468,24 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     if (shell !== undefined && env.PROJECT_DEV_SHELL_ACTIVE !== shell) {
       throw new Error("Project .envrc did not acknowledge the selected flake shell");
     }
-    return { env: Object.freeze(env), reason: null };
+    // Use the final watch set, including inputs discovered by this export, so
+    // the first successful snapshot has the same identity as later reuses.
+    const inputs = [];
+    for (const file of [...new Set([...definitions, ...watches.map(w => w.path)])].sort()) {
+      inputs.push([await watchInputState(file), definitions.includes(file)
+        ? await revision(file).catch(error => error.code === "ENOENT" ? null : Promise.reject(error)) : null]);
+    }
+    return { env: Object.freeze(env), reason: null,
+      generation: createHash("sha256").update(JSON.stringify([hash, shell, inputs])).digest("hex") };
   }
   return {
     list,
-    async resolve({ sessionID, cwd, signal, environment = "project", invocationID, toolCallID, retry = false }) {
+    async resolve({ sessionID, cwd, signal, environment = "project", invocationID, toolCallID, retry = false, rootEnvironment = false }) {
       signal?.throwIfAborted();
       if (!["project", "bootstrap"].includes(environment)) throw new Error("Unknown environment mode");
-      const project = await projectAt(cwd);
+      const discovered = await projectAt(cwd);
+      // Long-lived workspace processes use a stable root environment across file queries.
+      const project = rootEnvironment && discovered.root ? { ...discovered, cwd: discovered.root } : discovered;
       const context = { sessionID, invocationID, toolCallID, environment };
       if (environment === "bootstrap") {
         if (!bootstrap) throw new Error("Explicit repair execution requires bootstrapEnvironment configuration");
@@ -486,7 +496,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       const shell = project.covered ? selections.get(key(sessionID, project.root)) : undefined;
       if (shell !== undefined && !(await list(cwd, signal)).shells.includes(shell)) throw new Error("Selected shell is no longer in the flake");
       const captured = await capture(project, shell, signal, context, retry);
-      return { ...project, shell: shell ?? null, env: captured.env, fallback: captured.reason };
+      return { ...project, shell: shell ?? null, env: captured.env, fallback: captured.reason, generation: captured.generation };
     },
     async select({ sessionID, cwd, shell, signal }) {
       const project = await list(cwd, signal);
