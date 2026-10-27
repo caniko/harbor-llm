@@ -12,7 +12,7 @@ toolchain.
 
 ## 0. Locate
 
-- Find the dataset root and its metadata manifest (a CSV, TSV or JSON export).
+- Find the dataset root and its metadata manifest (a CSV or TSV export; convert a JSON export to CSV first).
   If several exist, ask which one is authoritative.
 - Read the manifest header and a few rows. Identify these columns:
   - the file path
@@ -28,11 +28,13 @@ toolchain.
 
 ```sh
 "$SKILL_DIR/env/bin/python3" -I "$SKILL_DIR/scripts/reconcile.py" MANIFEST ROOT \
-  --out OUT --delimiter ';' --path-column PATH_COL \
+  --out OUT --delimiter DELIM --path-column PATH_COL \
   --size-column SIZE_COL --group-column GROUP_COL
 ```
 
-Use `python3` from `PATH` when there is no bundled `env`. The script writes:
+Set `DELIM` to the delimiter found in the manifest header (`,` for CSV,
+`$'\t'` for TSV, `;` for many European exports). Use `python3` from `PATH`
+when there is no bundled `env`. The script writes:
 
 - `completeness.json`, `completeness.md`
 - `missing.csv`
