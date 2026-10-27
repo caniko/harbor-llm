@@ -24,6 +24,7 @@
     lib.environmentContractVersion = 1;
     lib.preparationAdmissionVersion = 2;
     lib.preparationBackpressureVersion = 1;
+    lib.nativeLspEnvironmentVersion = 1;
     homeManagerModules.default = import ./nix/home.nix self;
     nixosModules.custodian = {
       lib,
@@ -84,6 +85,7 @@
         passthru = {
           preparationAdmissionVersion = 2;
           preparationBackpressureVersion = 1;
+          nativeLspEnvironmentVersion = 1;
         };
         src = builtins.path {
           path = ./.;

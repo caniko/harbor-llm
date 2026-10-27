@@ -1,5 +1,9 @@
 # Changelog
 ## [Unreleased]
+- Prepare native OpenCode LSP servers through the v2 project-environment
+  barrier: `start.before` resolves the project root snapshot (stable across file
+  queries) and reports its generation. Consumers detect it through
+  `nativeLspEnvironmentVersion = 1`.
 - Give each release owner its own directory: the protocol crate moves to
   `rust/Cargo.toml` and the Python distribution to `python/pyproject.toml`, each
   with its own CHANGELOG. The root `Cargo.toml` is now a virtual workspace.
