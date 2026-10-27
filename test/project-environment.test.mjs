@@ -523,6 +523,33 @@ test("nix-direnv retention touches preserve an unchanged cached environment", in
   assert.ok((await stat(cache)).mtimeMs > before, "native retention refreshed the profile timestamp");
 });
 
+test("atomic cached profile renewal is re-exported once without accepting unstable inputs", integration, async (t) => {
+  const { projects: [cwd], environments } = await fixture(t, { direnvApproval: "auto" });
+  const layout = path.join(cwd, ".direnv");
+  const cache = path.join(layout, "flake-profile-fixture.rc");
+  await mkdir(layout);
+  await symlink(cwd, cache.slice(0, -3));
+  await writeFile(cache, "old");
+  await writeFile(path.join(cwd, ".envrc"), `
+watch_file .direnv/flake-profile-fixture.rc
+if [[ -e renew ]]; then
+  printf renewed > .direnv/next-cache
+  mv .direnv/next-cache .direnv/flake-profile-fixture.rc
+  if [[ ! -e keep-renewing ]]; then rm renew; fi
+fi
+export PROJECT_TEST="$(cat .direnv/flake-profile-fixture.rc)"
+echo export >> exports
+`);
+  assert.equal((await environments.resolve({ sessionID: "prime", cwd })).env.PROJECT_TEST, "old");
+  await writeFile(path.join(cwd, "renew"), "");
+  assert.equal((await environments.resolve({ sessionID: "renew", cwd })).env.PROJECT_TEST, "renewed");
+  assert.equal(await readFile(path.join(cwd, "exports"), "utf8"), "export\nexport\nexport\n", "renewal must discard its first snapshot and re-export once");
+  await writeFile(path.join(cwd, "keep-renewing"), "");
+  await writeFile(path.join(cwd, "renew"), "");
+  await assert.rejects(environments.resolve({ sessionID: "unstable", cwd }), /changed during preparation/);
+  assert.equal((await readFile(path.join(cwd, "exports"), "utf8")).trim().split("\n").length, 5, "continually replaced caches must stop after one fresh export");
+});
+
 test("a cached profile body edit rejects stale waiters even with preserved metadata", integration, async (t) => {
   const { projects: [cwd], environments } = await fixture(t, { direnvApproval: "auto" });
   const layout = path.join(cwd, ".direnv");
