@@ -63,10 +63,22 @@ these inputs:
 - a stratified sample of 3 to 6 files per value of the type column
 
 The manifest gives scouts direction and is not ground truth. Scouts confirm
-or contradict it against the files. Each scout writes its notes to
-`OUT/scout/<partition>.json`. Check every notes file against the schema in
-the brief, and re-dispatch a scout whose notes are missing or malformed. Do
-not patch its notes from memory.
+or contradict it against the files. Scouts write nothing (Claude Code's
+`Explore` cannot). Each returns its notes as JSON, and you save them
+verbatim to `OUT/scout/<partition>.json`. Check every notes file against the
+schema in the brief, and re-dispatch a scout whose notes are missing or
+malformed. Do not patch its notes from memory.
+
+Large scans are common in archive deliveries. Cap the sample at about 15
+files per partition, and give each small group one opened file so none goes
+unseen. Agent image readers reject files over about 128 MiB. Sample from
+files under that limit, or hand the scout a downscaled copy kept outside
+the dataset.
+
+Before a scout's claim goes into the report, check it against the manifest.
+If the claim depends on what an image shows, view the image yourself. Scouts
+tend to read a correct catalogue convention as an error. For example, a
+photograph of a drawing can rightly be typed as a photograph.
 
 ## 3. Synthesize
 

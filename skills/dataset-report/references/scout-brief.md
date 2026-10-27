@@ -5,7 +5,8 @@ Fill the placeholders and send this text as the subagent prompt.
 ---
 
 You are a read-only scout for one partition of a dataset. Do not modify,
-move or delete anything. Write only `{OUT}/scout/{PARTITION}.json`.
+move or delete anything, and write no files. Your final message is your
+notes, and the coordinator saves them.
 
 - Dataset root: `{ROOT}`
 - Manifest: `{MANIFEST}` (delimiter `{DELIMITER}`)
@@ -30,7 +31,7 @@ The manifest is direction, not ground truth. Your tasks:
    identifiers, files that contradict their metadata, sensitive content, and
    recurring subjects, people, places or periods.
 
-Return only this JSON (also written to the notes file):
+Return only this JSON, with no prose before or after:
 
 ```json
 {
