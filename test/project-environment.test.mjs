@@ -119,7 +119,8 @@ if (!cancelled) {
 }
 
 test("native preparation queues beyond its execution deadline and settles on completion proof", integration, async (t) => {
-  const { cwd, events, environments, requests } = await admissionFixture(t);
+  // Queue longer than the 1s execution deadline, which still leaves a loaded runner time to export.
+  const { cwd, events, environments, requests } = await admissionFixture(t, [{ wait: 1200 }], { preparationTimeoutMs: 1000 });
   assert.equal((await environments.resolve({ sessionID: "a", cwd })).env.PROJECT_TEST, "a:default");
   assert.deepEqual((await environments.list(cwd)).shells, ["default", "docs"]);
   for (const args of [...await requests("export"), ...await requests("eval")]) {
