@@ -31,11 +31,19 @@ def tex(label):
     return "".join(TEX.get(c, c) for c in label)
 
 
+def md(label):
+    return (label or "-").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
 def size_of(value):
+    # Blank means "no expected size"; a populated value that is not an integer
+    # must fail the gate instead of skipping the size check.
+    if not (value or "").strip():
+        return None
     try:
         return int(value.replace(" ", "").replace(" ", ""))
-    except (AttributeError, ValueError):
-        return None
+    except ValueError:
+        raise SystemExit(f"reconcile: invalid size {value!r}")
 
 
 def reconcile(manifest, root, delimiter, path_column, size_column=None, group_column=None):
@@ -45,6 +53,8 @@ def reconcile(manifest, root, delimiter, path_column, size_column=None, group_co
         rows, header = list(reader), reader.fieldnames
     if not header:
         raise SystemExit("reconcile: manifest has no header row")
+    if not rows:
+        raise SystemExit("reconcile: manifest has no data rows")
     for column in (path_column, size_column, group_column):
         if column and column not in header:
             raise SystemExit(f"reconcile: column {column!r} not in {header}")
@@ -135,7 +145,7 @@ def write(report, missing, out):
     ]
     for name, g in report["groups"].items():
         if g.get("missing"):
-            lines.append(f"| {name or '-'} | {g.get('rows', 0)} | {g.get('present', 0)} | {g.get('missing', 0)} | {g.get('missing_bytes', 0)} |")
+            lines.append(f"| {md(name)} | {g.get('rows', 0)} | {g.get('present', 0)} | {g.get('missing', 0)} | {g.get('missing_bytes', 0)} |")
     complete_groups = sum(1 for g in report["groups"].values() if not g.get("missing"))
     lines += ["", f"{complete_groups} of {len(report['groups'])} groups are complete and omitted from the table.", ""]
     (out / "completeness.md").write_text("\n".join(lines), encoding="utf-8")
@@ -178,8 +188,13 @@ def self_test():
             return False
 
         assert refuses("", "chemin"), "headerless manifest"
-        assert refuses("chemin\n", "chemin", "taille"), "absent size column"
-        assert refuses("chemin\n", "chemin", None, "fonds"), "absent group column"
+        assert refuses("chemin\n", "chemin"), "header-only manifest"
+        assert refuses("chemin\nx.jpg\n", "chemin", "taille"), "absent size column"
+        assert refuses("chemin;taille\nextra.txt;n/a\n", "chemin", "taille"), "invalid size"
+        manifest.write_text("chemin;taille\nextra.txt;\n")
+        assert reconcile(manifest, root, ";", "chemin", "taille")[0]["totals"]["present"] == 1, "blank size is optional"
+        assert md("a|b\nc") == "a\\|b c"
+        assert refuses("chemin\nx.jpg\n", "chemin", None, "fonds"), "absent group column"
         (Path(tmp, "secret.txt")).write_text("s")
         (root / "link.txt").symlink_to(Path(tmp, "secret.txt"))
         manifest.write_text("chemin\n..\\secret.txt\nlink.txt\nextra.txt\n")

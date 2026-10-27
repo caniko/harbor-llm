@@ -477,6 +477,15 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     const patch = JSON.parse(output);
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("Invalid direnv environment patch");
     const watches = decodeWatches(patch.DIRENV_WATCHES);
+    // Scan before validating the watches: a change after the scan fails the
+    // validation below, so the generation always describes this export's inputs.
+    // Use the final watch set, including inputs discovered by this export, so
+    // the first successful snapshot has the same identity as later reuses.
+    const inputs = [];
+    for (const file of [...new Set([...definitions, ...watches.map(w => w.path)])].sort()) {
+      inputs.push([await watchInputState(file), definitions.includes(file)
+        ? await revision(file).catch(error => error.code === "ENOENT" ? null : Promise.reject(error)) : null]);
+    }
     await validateWatches(watches);
     knownWatches.set(envrc, [...new Set(watches.map(w => w.path))].sort());
     for (const [name, value] of Object.entries(patch)) {
@@ -487,13 +496,6 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     if (env.NIX_DIRENV_DID_FALLBACK) throw new Error("nix-direnv used a stale fallback; repair the project environment");
     if (shell !== undefined && env.PROJECT_DEV_SHELL_ACTIVE !== shell) {
       throw new Error("Project .envrc did not acknowledge the selected flake shell");
-    }
-    // Use the final watch set, including inputs discovered by this export, so
-    // the first successful snapshot has the same identity as later reuses.
-    const inputs = [];
-    for (const file of [...new Set([...definitions, ...watches.map(w => w.path)])].sort()) {
-      inputs.push([await watchInputState(file), definitions.includes(file)
-        ? await revision(file).catch(error => error.code === "ENOENT" ? null : Promise.reject(error)) : null]);
     }
     return { env: Object.freeze(env), reason: null,
       generation: createHash("sha256").update(JSON.stringify([hash, shell, inputs])).digest("hex") };

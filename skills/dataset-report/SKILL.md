@@ -49,6 +49,11 @@ title page. Rerun this phase whenever the delivery changes.
 
 ## 2. Scout
 
+Scouts read raw sample files, and a hosted model sends them to its provider.
+Before dispatching, confirm that the chosen model is approved for this
+dataset's confidentiality, or get the user's explicit authorization. If
+neither exists, stop and ask.
+
 Split the manifest into partitions along the grouping column. Balance them by
 file count, at about 300 to 800 files each, and merge small groups. Run one
 read-only subagent per partition **in parallel** on the cheapest capable
