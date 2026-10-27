@@ -24,6 +24,17 @@ See [MCP admission](docs/mcp-admission.md) for the contract, consumer boundary,
 and native verification commands. The MCP code and assets retain the MIT
 license in `src/mcp-admission.LICENSE`.
 
+## Skills
+
+`skills/` holds agent skills in the shared `SKILL.md` format. Harbor's root
+catalog declares each skill's framework requirements (for example `tex` and
+`python`) and builds a bundle with that toolchain in `env/bin`. This component
+owns only the skill content.
+
+- `dataset-report`: completeness gate (`scripts/reconcile.py --self-test`),
+  parallel small-model scouting directed by the dataset's metadata, and a
+  LaTeX/PDF report built from `assets/report.tex`.
+
 ## Project environment contract
 
 - No agent command is accepted or executed by the environment backend.
@@ -171,6 +182,9 @@ distinguish timeout, cancellation, buffer overflow, exit code and termination
 signal without exposing hook output or environment values. Linux preparation
 uses `setsid` (optionally an absolute configured `setsid` path) so cancellation
 also terminates its helper processes. This does not cancel running commands.
+An atomic nix-direnv cache replacement discards the first environment snapshot
+and permits one additional bounded export. Source edits, in-place cache edits,
+or a cache that keeps replacing itself still fail closed; commands are not replayed.
 
 On Linux, `preparationAdmission = { amc, contract, memoryBytes }` optionally
 routes exports and flake catalog evaluation through an absolute, operator-selected
@@ -185,8 +199,9 @@ distinguishes `waiting` from `preparing`.
 A result settles only with exactly one matching `TOKEN:complete:EXIT` proof seen
 after entry. Pre-entry failure, missing entry, and missing, duplicate, malformed
 or mismatched proof fail closed without returning an environment or replaying
-the preparation; an entered outcome without proof is reported as `reconciling`
-for AMC to resolve. Only typed nonacceptance before entry (a valid
+the preparation; an entered outcome without proof, including cancellation or
+timeout, fails with `EXECUTION_OUTCOME_UNKNOWN` and is reported as `reconciling`
+for AMC to resolve. Inspect native execution and any side effects before retrying. Only typed nonacceptance before entry (a valid
 `TOKEN:backpressure:MS` frame with exit 75) submits a new request with a fresh
 token after the delay, still as waiting. There is no unaccounted fallback.
 Cancellation waits for AMC's client to finish its cleanup attempt; the broker
@@ -256,14 +271,24 @@ against the exact backend selected by the consumer.
 Run the model-free native-executor canary against an explicit candidate:
 
 ```sh
-node test/check-project-environment-v2.mjs /absolute/opencode /absolute/direnv /absolute/nix
+node test/check-project-environment-v2.mjs /absolute/opencode /absolute/direnv /absolute/nix /absolute/nix-direnv/direnvrc
 ```
 
 For source testing, set `OPENCODE_SOURCE=/checkout` and pass the declared Bun
 executable instead of `opencode`. The check uses isolated state and fixtures,
 tests direct-shell approval plus native permission denial, and preserves its
 redacted backend log. `PROJECT_ENV_PLUGIN` may select an exact packaged plugin
-directory. It does not open production state or issue provider requests.
+directory. When testing a consumer wrapper, `PROJECT_ENV_IMPLEMENTATION` supplies
+its immutable Harbor implementation path as the `plugin` option. It does not
+open production state or issue provider requests.
+
+Run this separately from `npm test` when changing preparation or the native
+adapter. It verifies shared-waiter and final-waiter cancellation, bounded hung
+cache renewal, bootstrap access during preparation/lock waits, and lock/child cleanup
+followed by successful retries. The cache fixture sources the supplied
+nix-direnv script with controlled `_nix` responses: a dangling profile must renew
+once for concurrent callers, and warm loads must preserve the watched cache.
+This exercises real nix-direnv cache handling, not actual Nix builds or GC.
 
 The Nix `environments` check supplies real direnv/Nix binaries. Local resolver
 tests run with `DIRENV_BIN=/absolute/direnv NIX_BIN=/absolute/nix node --test

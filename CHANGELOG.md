@@ -1,5 +1,15 @@
 # Changelog
 ## [Unreleased]
+- Report an entered native preparation without completion proof as
+  `EXECUTION_OUTCOME_UNKNOWN` (reconciling), including after cancellation or
+  timeout; the last cancelled waiter now surfaces it. Ported from the wip
+  harbor #9 follow-ups.
+- Prepare native OpenCode LSP servers through the v2 project-environment
+  barrier: `start.before` resolves the project root snapshot (stable across file
+  queries) and reports its generation. Consumers detect it through
+  `nativeLspEnvironmentVersion = 1`.
+- Add the `dataset-report` agent skill: manifest completeness gate, metadata-directed
+  small-model scouting and a LaTeX report skeleton.
 - Give each release owner its own directory: the protocol crate moves to
   `rust/Cargo.toml` and the Python distribution to `python/pyproject.toml`, each
   with its own CHANGELOG. The root `Cargo.toml` is now a virtual workspace.

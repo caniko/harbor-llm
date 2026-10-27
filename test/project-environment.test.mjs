@@ -103,7 +103,8 @@ if (!cancelled) {
     process.exit(step.exit ?? code ?? 1);
   };
   const payload = args.slice(args.indexOf("--") + 1);
-  if (step.code !== undefined) settle(step.code);
+  if (step.hold) setInterval(() => {}, 1e6);
+  else if (step.code !== undefined) settle(step.code);
   else spawn(payload[0], payload.slice(1), { stdio: "inherit" }).on("exit", settle);
 }
 `, { mode: 0o700 });
@@ -118,7 +119,8 @@ if (!cancelled) {
 }
 
 test("native preparation queues beyond its execution deadline and settles on completion proof", integration, async (t) => {
-  const { cwd, events, environments, requests } = await admissionFixture(t);
+  // Queue longer than the 1s execution deadline, which still leaves a loaded runner time to export.
+  const { cwd, events, environments, requests } = await admissionFixture(t, [{ wait: 1200 }], { preparationTimeoutMs: 1000 });
   assert.equal((await environments.resolve({ sessionID: "a", cwd })).env.PROJECT_TEST, "a:default");
   assert.deepEqual((await environments.list(cwd)).shells, ["default", "docs"]);
   for (const args of [...await requests("export"), ...await requests("eval")]) {
@@ -170,10 +172,20 @@ test("an entered preparation settles only with exactly one matching completion p
     { after: [":complete:$code"], exit: 1 },
   ]) {
     const { cwd, environments, requests } = await admissionFixture(t, [step]);
-    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), error => error.code === "PREPARATION_FAILED"
-      && /reconciling/.test(error.preparation.reason), JSON.stringify(step));
+    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), error => error.code === "EXECUTION_OUTCOME_UNKNOWN"
+      && /reconciling/.test(error.preparation.reason) && /inspect native execution/.test(error.message), JSON.stringify(step));
     assert.equal((await requests()).length, 1, "an unconfirmed outcome is never replayed");
   }
+});
+
+test("cancelling an entered preparation without completion proof leaves its outcome unknown", integration, async (t) => {
+  const { cwd, events, environments } = await admissionFixture(t, [{ hold: true }]);
+  const controller = new AbortController();
+  const pending = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: controller.signal }),
+    error => error.code === "EXECUTION_OUTCOME_UNKNOWN" && /\(cancelled\)/.test(error.preparation.reason));
+  for (let attempt = 0; attempt < 200 && !events.some(event => event.phase === "direnv export" && event.status === "preparing"); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  controller.abort();
+  await pending;
 });
 
 test("a proven workload failure keeps its native exit classification", integration, async (t) => {
@@ -204,7 +216,8 @@ test("only a valid backpressure frame with exit 75 authorizes another request", 
     { before: [], after: [":backpressure:1"], exit: 75 },
   ]) {
     const { cwd, environments, requests } = await admissionFixture(t, [step]);
-    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: "PREPARATION_FAILED" }, JSON.stringify(step));
+    // An entered client with a malformed proof is reconciling, not a plain failure.
+    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: step.enter === false ? "PREPARATION_FAILED" : "EXECUTION_OUTCOME_UNKNOWN" }, JSON.stringify(step));
     assert.equal((await requests()).length, 1, JSON.stringify(step));
   }
 });
@@ -521,6 +534,33 @@ test("nix-direnv retention touches preserve an unchanged cached environment", in
   const results = await Promise.all(["one", "two", "three"].map(sessionID => environments.resolve({ sessionID, cwd })));
   assert.deepEqual(results.map(result => result.env.PROJECT_TEST), ["cached", "cached", "cached"]);
   assert.ok((await stat(cache)).mtimeMs > before, "native retention refreshed the profile timestamp");
+});
+
+test("atomic cached profile renewal is re-exported once without accepting unstable inputs", integration, async (t) => {
+  const { projects: [cwd], environments } = await fixture(t, { direnvApproval: "auto" });
+  const layout = path.join(cwd, ".direnv");
+  const cache = path.join(layout, "flake-profile-fixture.rc");
+  await mkdir(layout);
+  await symlink(cwd, cache.slice(0, -3));
+  await writeFile(cache, "old");
+  await writeFile(path.join(cwd, ".envrc"), `
+watch_file .direnv/flake-profile-fixture.rc
+if [[ -e renew ]]; then
+  printf renewed > .direnv/next-cache
+  mv .direnv/next-cache .direnv/flake-profile-fixture.rc
+  if [[ ! -e keep-renewing ]]; then rm renew; fi
+fi
+export PROJECT_TEST="$(cat .direnv/flake-profile-fixture.rc)"
+echo export >> exports
+`);
+  assert.equal((await environments.resolve({ sessionID: "prime", cwd })).env.PROJECT_TEST, "old");
+  await writeFile(path.join(cwd, "renew"), "");
+  assert.equal((await environments.resolve({ sessionID: "renew", cwd })).env.PROJECT_TEST, "renewed");
+  assert.equal(await readFile(path.join(cwd, "exports"), "utf8"), "export\nexport\nexport\n", "renewal must discard its first snapshot and re-export once");
+  await writeFile(path.join(cwd, "keep-renewing"), "");
+  await writeFile(path.join(cwd, "renew"), "");
+  await assert.rejects(environments.resolve({ sessionID: "unstable", cwd }), /changed during preparation/);
+  assert.equal((await readFile(path.join(cwd, "exports"), "utf8")).trim().split("\n").length, 5, "continually replaced caches must stop after one fresh export");
 });
 
 test("a cached profile body edit rejects stale waiters even with preserved metadata", integration, async (t) => {

@@ -1,0 +1,82 @@
+% Dataset report skeleton (lualatex via latexmk). Replace every TODO.
+\documentclass[11pt,a4paper]{article}
+\usepackage[english]{babel} % TODO: dataset language, e.g. french
+\usepackage{fontspec}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\usepackage{hyperref}
+\pgfplotsset{compat=1.18}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{TODO: dataset name}
+\rhead{\thepage}
+
+\title{TODO: dataset name}
+\author{TODO: author}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{Summary}
+TODO: three to five sentences on what the dataset is, how complete it is and
+what the report recommends.
+
+\section{Provenance and completeness}
+TODO: source, delivery date, manifest file, totals from completeness.json.
+
+\IfFileExists{data/groups.csv}{%
+\pgfplotstableread[col sep=comma]{data/groups.csv}\groups
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+        ybar stacked, bar width=4pt, width=\textwidth, height=6cm,
+        ylabel={files}, xtick=data, xticklabels from table={\groups}{group},
+        xticklabel style={rotate=90, font=\tiny}, legend style={at={(0.5,1.02)}, anchor=south, legend columns=2}]
+      \addplot table [x expr=\coordindex, y=present] {\groups};
+      \addplot table [x expr=\coordindex, y=missing] {\groups};
+      \legend{present, missing}
+    \end{axis}
+  \end{tikzpicture}
+  \caption{Files present and missing per group.}
+\end{figure}}{\emph{No group data (data/groups.csv).}}
+
+\section{Collection structure}
+TODO: groups, hierarchy, identifier and naming conventions.
+
+\section{Metadata profile}
+TODO: columns, fill rates, type distribution, description conventions.
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{lr}
+    \toprule
+    Type & Rows \\
+    \midrule
+    TODO & 0 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Rows per document type.}
+\end{table}
+
+\section{Content findings}
+TODO: what the scouts observed per partition: themes, people, places,
+periods, metadata agreement.
+
+\section{Anomalies and open questions}
+TODO: identifier inconsistencies, contradictions, questions for the holder.
+
+\section{Recommendations}
+TODO: next steps for cataloguing, ingest or analysis.
+
+\appendix
+\section{Per-group inventory}
+TODO: one row per group.
+
+\end{document}
