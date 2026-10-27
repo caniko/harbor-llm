@@ -24,6 +24,17 @@ See [MCP admission](docs/mcp-admission.md) for the contract, consumer boundary,
 and native verification commands. The MCP code and assets retain the MIT
 license in `src/mcp-admission.LICENSE`.
 
+## Skills
+
+`skills/` holds agent skills in the shared `SKILL.md` format. Harbor's root
+catalog declares each skill's framework requirements (for example `tex` and
+`python`) and builds a bundle with that toolchain in `env/bin`. This component
+owns only the skill content.
+
+- `dataset-report`: completeness gate (`scripts/reconcile.py --self-test`),
+  parallel small-model scouting directed by the dataset's metadata, and a
+  LaTeX/PDF report built from `assets/report.tex`.
+
 ## Project environment contract
 
 - No agent command is accepted or executed by the environment backend.

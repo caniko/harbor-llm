@@ -1,5 +1,7 @@
 # Changelog
 ## [Unreleased]
+- Add the `dataset-report` agent skill: manifest completeness gate, metadata-directed
+  small-model scouting and a LaTeX report skeleton.
 - Give each release owner its own directory: the protocol crate moves to
   `rust/Cargo.toml` and the Python distribution to `python/pyproject.toml`, each
   with its own CHANGELOG. The root `Cargo.toml` is now a virtual workspace.
