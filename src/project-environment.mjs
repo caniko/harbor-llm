@@ -486,6 +486,9 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       inputs.push([await watchInputState(file), definitions.includes(file)
         ? await revision(file).catch(error => error.code === "ENOENT" ? null : Promise.reject(error)) : null]);
     }
+    // The scan must also match the pre-export definition state, or the
+    // generation could name inputs newer than the exported environment.
+    if (JSON.stringify(await definitionState()) !== encoded) throw new Error("Project environment changed during preparation; retry");
     await validateWatches(watches);
     knownWatches.set(envrc, [...new Set(watches.map(w => w.path))].sort());
     for (const [name, value] of Object.entries(patch)) {

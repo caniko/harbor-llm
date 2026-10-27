@@ -29,8 +29,11 @@ toolchain.
 ```sh
 "$SKILL_DIR/env/bin/python3" -I "$SKILL_DIR/scripts/reconcile.py" MANIFEST ROOT \
   --out OUT --delimiter DELIM --path-column PATH_COL \
-  --size-column SIZE_COL --group-column GROUP_COL
+  [--size-column SIZE_COL] [--group-column GROUP_COL]
 ```
+
+Include `--size-column` and `--group-column` only when the manifest has such a
+column; both are optional.
 
 Set `DELIM` to the delimiter found in the manifest header (`,` for CSV,
 `$'\t'` for TSV, `;` for many European exports). Use `python3` from `PATH`
