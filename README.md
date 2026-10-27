@@ -199,8 +199,9 @@ distinguishes `waiting` from `preparing`.
 A result settles only with exactly one matching `TOKEN:complete:EXIT` proof seen
 after entry. Pre-entry failure, missing entry, and missing, duplicate, malformed
 or mismatched proof fail closed without returning an environment or replaying
-the preparation; an entered outcome without proof is reported as `reconciling`
-for AMC to resolve. Only typed nonacceptance before entry (a valid
+the preparation; an entered outcome without proof, including cancellation or
+timeout, fails with `EXECUTION_OUTCOME_UNKNOWN` and is reported as `reconciling`
+for AMC to resolve. Inspect native execution and any side effects before retrying. Only typed nonacceptance before entry (a valid
 `TOKEN:backpressure:MS` frame with exit 75) submits a new request with a fresh
 token after the delay, still as waiting. There is no unaccounted fallback.
 Cancellation waits for AMC's client to finish its cleanup attempt; the broker

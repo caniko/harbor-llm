@@ -97,7 +97,8 @@ async function sharedPreparation(key, signal, prepare, onJoin) {
     if (--state.waiters === 0) {
       if (preparations.get(key) === state) preparations.delete(key);
       state.controller.abort();
-      await state.promise.catch(() => {});
+      // The last waiter learns when cleanup left the native outcome unknown.
+      await state.promise.catch(error => { if (error.code === "EXECUTION_OUTCOME_UNKNOWN") throw error; });
     }
   }
 }
@@ -224,7 +225,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     const combined = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
     let child, closed;
     const cancel = () => child?.kill("SIGTERM");
-    const unconfirmed = (reason) => Object.assign(new Error(reason), { admission: reason });
+    const unconfirmed = (reason, reconciling = false) => Object.assign(new Error(reason), { admission: reason, reconciling });
     try {
       combined.throwIfAborted();
       onProgress?.({ ...progress, status: admitted ? "waiting" : "preparing" });
@@ -268,15 +269,15 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
           }
           throw outcome.error ?? unconfirmed("native entry not confirmed");
         }
-        // Local cancellation, deadlines and output limits keep their outcomes.
-        combined.throwIfAborted();
         if (outcome.error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw outcome.error;
         // A client exit is not workload evidence: settle only with exactly one
         // proof naming the same exit code. Otherwise AMC reconciles; no replay.
         const code = outcome.error ? outcome.error.code : 0;
         if (frames.completions.length !== 1 || !Number.isSafeInteger(code) || frames.completions[0] !== String(code)) {
-          throw unconfirmed(`native outcome reconciling; client ${outcome.error?.signal ? `signal ${outcome.error.signal}` : `exit ${code}`}, completion proof ${frames.completions.join(",") || "missing"}`);
+          throw unconfirmed(`native outcome reconciling; client ${outcome.error?.signal ? `signal ${outcome.error.signal}` : `exit ${code}`}, completion proof ${frames.completions.join(",") || "missing"}`, true);
         }
+        // Proven outcomes keep local cancellation and deadline classification.
+        combined.throwIfAborted();
         if (outcome.error) throw outcome.error;
         onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
         return outcome.result.stdout;
@@ -292,13 +293,15 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       // Hook output can contain credentials. Never forward stdout/stderr.
       const lockDrift = !signal?.aborted && !timedOut
         && /requires lock file changes but they're not allowed/.test(error.stderr ?? "");
-      const reason = signal?.aborted ? "cancelled" : timedOut ? "timeout" : lockDrift ? "lock file changes required"
+      const unknown = error.reconciling === true;
+      const reason = unknown ? `${error.admission}${signal?.aborted ? " (cancelled)" : timedOut ? " (timeout)" : ""}`
+        : signal?.aborted ? "cancelled" : timedOut ? "timeout" : lockDrift ? "lock file changes required"
         : error.admission ?? (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "output limit exceeded"
           : error.signal ? `terminated by ${error.signal}` : `exit ${error.code ?? "unknown"}`);
       const result = { ...progress, status: "failed", reason, elapsedMs: Math.round(performance.now() - started) };
       onProgress?.(result);
-      const failure = new Error(`Project environment preparation failed: ${result.phase}; cwd=${cwd}; envrc=${detail.envrc ?? "not yet resolved"}; approval=${detail.approval ?? "not yet checked"}; ${reason}; elapsed=${result.elapsedMs}ms; limit=${timeoutMs}ms; preparation=${progress.preparationID}`);
-      failure.code = signal?.aborted ? "CANCELLED" : timedOut ? "TIMEOUT" : lockDrift ? "LOCK_DRIFT" : "PREPARATION_FAILED";
+      const failure = new Error(`Project environment preparation failed: ${result.phase}; cwd=${cwd}; envrc=${detail.envrc ?? "not yet resolved"}; approval=${detail.approval ?? "not yet checked"}; ${reason}; elapsed=${result.elapsedMs}ms; limit=${timeoutMs}ms; preparation=${progress.preparationID}${unknown ? "; inspect native execution and any side effects before retrying" : ""}`);
+      failure.code = unknown ? "EXECUTION_OUTCOME_UNKNOWN" : signal?.aborted ? "CANCELLED" : timedOut ? "TIMEOUT" : lockDrift ? "LOCK_DRIFT" : "PREPARATION_FAILED";
       failure.preparation = result;
       throw failure;
     } finally {
@@ -463,7 +466,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       // approval into the same barrier; preserve unrelated evaluation errors.
       // Recovery keeps the selection restriction so a vanishing local .envrc
       // can never prompt for or auto-allow an ancestor on selection's behalf.
-      if (error.code === "CANCELLED" || error.code === "TIMEOUT") throw error;
+      if (["CANCELLED", "TIMEOUT", "EXECUTION_OUTCOME_UNKNOWN"].includes(error.code)) throw error;
       if (error.code === "LOCK_DRIFT" && JSON.stringify(await definitionState()) === encoded) {
         if (blocked.size >= 128) blocked.delete(blocked.keys().next().value);
         blocked.set(identity, { message: error.message, preparation: error.preparation });

@@ -1,5 +1,9 @@
 # Changelog
 ## [Unreleased]
+- Report an entered native preparation without completion proof as
+  `EXECUTION_OUTCOME_UNKNOWN` (reconciling), including after cancellation or
+  timeout; the last cancelled waiter now surfaces it. Ported from the wip
+  harbor #9 follow-ups.
 - Prepare native OpenCode LSP servers through the v2 project-environment
   barrier: `start.before` resolves the project root snapshot (stable across file
   queries) and reports its generation. Consumers detect it through

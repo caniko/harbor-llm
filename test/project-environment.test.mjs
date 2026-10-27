@@ -103,7 +103,8 @@ if (!cancelled) {
     process.exit(step.exit ?? code ?? 1);
   };
   const payload = args.slice(args.indexOf("--") + 1);
-  if (step.code !== undefined) settle(step.code);
+  if (step.hold) setInterval(() => {}, 1e6);
+  else if (step.code !== undefined) settle(step.code);
   else spawn(payload[0], payload.slice(1), { stdio: "inherit" }).on("exit", settle);
 }
 `, { mode: 0o700 });
@@ -170,10 +171,20 @@ test("an entered preparation settles only with exactly one matching completion p
     { after: [":complete:$code"], exit: 1 },
   ]) {
     const { cwd, environments, requests } = await admissionFixture(t, [step]);
-    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), error => error.code === "PREPARATION_FAILED"
-      && /reconciling/.test(error.preparation.reason), JSON.stringify(step));
+    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), error => error.code === "EXECUTION_OUTCOME_UNKNOWN"
+      && /reconciling/.test(error.preparation.reason) && /inspect native execution/.test(error.message), JSON.stringify(step));
     assert.equal((await requests()).length, 1, "an unconfirmed outcome is never replayed");
   }
+});
+
+test("cancelling an entered preparation without completion proof leaves its outcome unknown", integration, async (t) => {
+  const { cwd, events, environments } = await admissionFixture(t, [{ hold: true }]);
+  const controller = new AbortController();
+  const pending = assert.rejects(environments.resolve({ sessionID: "a", cwd, signal: controller.signal }),
+    error => error.code === "EXECUTION_OUTCOME_UNKNOWN" && /\(cancelled\)/.test(error.preparation.reason));
+  for (let attempt = 0; attempt < 200 && !events.some(event => event.phase === "direnv export" && event.status === "preparing"); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  controller.abort();
+  await pending;
 });
 
 test("a proven workload failure keeps its native exit classification", integration, async (t) => {
@@ -204,7 +215,8 @@ test("only a valid backpressure frame with exit 75 authorizes another request", 
     { before: [], after: [":backpressure:1"], exit: 75 },
   ]) {
     const { cwd, environments, requests } = await admissionFixture(t, [step]);
-    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: "PREPARATION_FAILED" }, JSON.stringify(step));
+    // An entered client with a malformed proof is reconciling, not a plain failure.
+    await assert.rejects(environments.resolve({ sessionID: "a", cwd }), { code: step.enter === false ? "PREPARATION_FAILED" : "EXECUTION_OUTCOME_UNKNOWN" }, JSON.stringify(step));
     assert.equal((await requests()).length, 1, JSON.stringify(step));
   }
 });
