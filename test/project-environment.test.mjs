@@ -124,7 +124,7 @@ test("native preparation queues beyond its execution deadline and settles on com
   assert.equal((await environments.resolve({ sessionID: "a", cwd })).env.PROJECT_TEST, "a:default");
   assert.deepEqual((await environments.list(cwd)).shells, ["default", "docs"]);
   for (const args of [...await requests("export"), ...await requests("eval")]) {
-    assert.deepEqual(args.slice(0, 9), ["admission", "exec", "--contract", "nix-eval", "--queue", "--max-ram-usage", "1048576", "--runtime-max-sec", args.includes("eval") ? "120" : "1"]);
+    assert.deepEqual(args.slice(0, 9), ["admission", "exec", "--contract", "nix-eval", "--queue", "--max-ram-usage", "1048576B", "--runtime-max-sec", args.includes("eval") ? "120" : "1"]);
     assert.equal(args.includes("--timeout"), false, "no implicit queue deadline");
     assert.match(args[args.indexOf("--ready-token") + 1], /^[a-z0-9-]{36}$/);
   }
