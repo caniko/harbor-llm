@@ -240,7 +240,7 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
         // attempt can confirm this one.
         const token = admitted ? randomUUID() : undefined;
         const command = admitted ? [preparationAdmission.amc, "admission", "exec", "--contract", preparationAdmission.contract,
-          "--queue", "--max-ram-usage", String(preparationAdmission.memoryBytes), "--runtime-max-sec", String(Math.ceil(timeoutMs / 1000)),
+          "--queue", "--max-ram-usage", `${preparationAdmission.memoryBytes}B`, "--runtime-max-sec", String(Math.ceil(timeoutMs / 1000)),
           "--ready-token", token, "--", ...guarded] : guarded;
         // AMC owns native cancellation and descendant cleanup. Signal its client
         // without execFile's early AbortError or a process-group SIGKILL.
