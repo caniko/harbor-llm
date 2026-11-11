@@ -59,11 +59,11 @@ neither exists, stop and ask.
 
 Split the manifest into partitions along the grouping column. Balance them by
 file count, at about 300 to 800 files each, and merge small groups. Run one
-read-only subagent per partition **in parallel** on the cheapest capable
-model:
+read-only subagent per partition **in parallel** on the `scout` route:
 
-- Claude Code: `Explore` subagents with `model: haiku`.
-- OpenCode, Codex and other harnesses: their small or fast model, read-only.
+- Claude Code, OpenCode, Codex and other harnesses: dispatch each scout on the
+  `scout` route; it selects the model.
+- No routes defined: the harness's cheapest read-only subagent.
 
 Give each scout the brief in `references/scout-brief.md`, filled in with
 these inputs:
