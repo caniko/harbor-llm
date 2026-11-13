@@ -59,28 +59,26 @@ async function main(input) {
   const unique = `${process.pid}-${randomUUID()}`;
   const edited = editedFiles(input.toolCall, root);
   if (edited.length) {
-    // One record per edit, renamed in whole: hooks for parallel calls may run
-    // at once, and a concurrent check claims the directory by renaming it.
-    await mkdir(base, { recursive: true });
+    // One record per edit, renamed in whole into a directory that is never
+    // removed: hooks for parallel calls, and a check, may run at once.
+    await mkdir(state, { recursive: true });
     const record = path.join(base, `.${unique}`);
     await writeFile(record, JSON.stringify(edited));
-    for (;;) {
-      await mkdir(state, { recursive: true });
-      try {
-        await rename(record, path.join(state, unique));
-        return {};
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error; // claimed meanwhile: start a new list
-      }
-    }
+    await rename(record, path.join(state, unique));
+    return {};
   }
-  // Claim the pending list atomically, and forget it before checking: a check
-  // that fails or times out must not repeat on every call.
-  const claimed = `${state}.${unique}`;
-  if (!(await rename(state, claimed).then(() => true, () => false))) return {};
-  const records = await Promise.all((await readdir(claimed)).map((name) => readFile(path.join(claimed, name), "utf8")));
-  await rm(claimed, { recursive: true, force: true });
-  const report = await check(root, [...new Set(records.flatMap((record) => JSON.parse(record)))]);
+  // Claim each record by renaming it away, so a concurrent check takes it at
+  // most once and one published meanwhile waits for the next check. Claimed
+  // records are forgotten before checking: a failed check must not repeat.
+  const files = [];
+  for (const name of await readdir(state).catch(() => [])) {
+    const claimed = path.join(base, `.${unique}-${name}`);
+    if (!(await rename(path.join(state, name), claimed).then(() => true, () => false))) continue;
+    files.push(...JSON.parse(await readFile(claimed, "utf8")));
+    await rm(claimed, { force: true });
+  }
+  if (!files.length) return {};
+  const report = await check(root, [...new Set(files)]);
   return report ? { decision: "deny", reason: report } : {};
 }
 

@@ -125,12 +125,15 @@ in
       [ "$(hook '{"name":"view_file","args":{"AbsolutePath":"b.x"}}')" = "{}" ]
       # Edit hooks running beside each other and beside a check lose no file.
       for i in 1 2 3 4 5 6 7 8; do echo BAD > red/p$i.x; done
-      hook '{"name":"write_to_file","args":{"TargetFile":"a.x"}}'
-      for i in 1 2 3 4 5 6 7 8; do hook "{\"name\":\"write_to_file\",\"args\":{\"TargetFile\":\"p$i.x\"}}" & done
-      hook '{"name":"run_command","args":{}}' > first &
-      wait
-      hook '{"name":"run_command","args":{}}' > second
-      jq -s -e '[.[].reason // ""] | add as $r | [range(1; 9) as $i | $r | contains("p\($i).x")] | all' first second
+      for round in 1 2 3 4 5; do
+        hook '{"name":"write_to_file","args":{"TargetFile":"a.x"}}'
+        for i in 1 2 3 4 5 6 7 8; do hook "{\"name\":\"write_to_file\",\"args\":{\"TargetFile\":\"p$i.x\"}}" & done
+        hook '{"name":"run_command","args":{}}' > first &
+        hook '{"name":"run_command","args":{}}' > second &
+        wait
+        hook '{"name":"run_command","args":{}}' > third
+        jq -s -e '[.[].reason // ""] | add as $r | [range(1; 9) as $i | $r | contains("p\($i).x")] | all' first second third
+      done
 
       touch $out
     ''
