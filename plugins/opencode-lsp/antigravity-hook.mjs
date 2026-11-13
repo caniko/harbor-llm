@@ -8,8 +8,8 @@
 // a failing hook as a denial. The package build substitutes @cli@ (via
 // server.js) and places upstream/ beside this file.
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { appendFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -54,22 +54,33 @@ export async function check(root, files) {
 
 async function main(input) {
   const root = process.cwd();
-  const state = path.join(tmpdir(), "harbor-lsp-antigravity",
-    `${createHash("sha256").update(String(input.conversationId ?? "")).digest("hex").slice(0, 16)}`);
+  const base = path.join(tmpdir(), "harbor-lsp-antigravity");
+  const state = path.join(base, createHash("sha256").update(String(input.conversationId ?? "")).digest("hex").slice(0, 16));
+  const unique = `${process.pid}-${randomUUID()}`;
   const edited = editedFiles(input.toolCall, root);
   if (edited.length) {
-    // Appends, not rewrites: Antigravity may run hooks for parallel edits at once.
-    await mkdir(path.dirname(state), { recursive: true });
-    await appendFile(state, edited.map((file) => `${file}\n`).join(""));
-    return {};
+    // One record per edit, renamed in whole: hooks for parallel calls may run
+    // at once, and a concurrent check claims the directory by renaming it.
+    await mkdir(base, { recursive: true });
+    const record = path.join(base, `.${unique}`);
+    await writeFile(record, JSON.stringify(edited));
+    for (;;) {
+      await mkdir(state, { recursive: true });
+      try {
+        await rename(record, path.join(state, unique));
+        return {};
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error; // claimed meanwhile: start a new list
+      }
+    }
   }
   // Claim the pending list atomically, and forget it before checking: a check
   // that fails or times out must not repeat on every call.
-  const claimed = `${state}.${process.pid}`;
+  const claimed = `${state}.${unique}`;
   if (!(await rename(state, claimed).then(() => true, () => false))) return {};
-  const pending = [...new Set((await readFile(claimed, "utf8")).split("\n").filter(Boolean))];
-  await rm(claimed, { force: true });
-  const report = await check(root, pending);
+  const records = await Promise.all((await readdir(claimed)).map((name) => readFile(path.join(claimed, name), "utf8")));
+  await rm(claimed, { recursive: true, force: true });
+  const report = await check(root, [...new Set(records.flatMap((record) => JSON.parse(record)))]);
   return report ? { decision: "deny", reason: report } : {};
 }
 

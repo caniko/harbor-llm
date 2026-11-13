@@ -123,10 +123,14 @@ in
       [ "$(hook '{"name":"run_command","args":{}}')" = "{}" ]
       [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"b.x"}}')" = "{}" ]
       [ "$(hook '{"name":"view_file","args":{"AbsolutePath":"b.x"}}')" = "{}" ]
-      # Parallel edit hooks all land in the pending list.
-      for i in 1 2 3 4 5 6 7 8; do echo BAD > red/p$i.x; hook "{\"name\":\"write_to_file\",\"args\":{\"TargetFile\":\"p$i.x\"}}" & done
+      # Edit hooks running beside each other and beside a check lose no file.
+      for i in 1 2 3 4 5 6 7 8; do echo BAD > red/p$i.x; done
+      hook '{"name":"write_to_file","args":{"TargetFile":"a.x"}}'
+      for i in 1 2 3 4 5 6 7 8; do hook "{\"name\":\"write_to_file\",\"args\":{\"TargetFile\":\"p$i.x\"}}" & done
+      hook '{"name":"run_command","args":{}}' > first &
       wait
-      hook '{"name":"run_command","args":{}}' | jq -e '[range(1; 9) as $i | .reason | contains("p\($i).x")] | all'
+      hook '{"name":"run_command","args":{}}' > second
+      jq -s -e '[.[].reason // ""] | add as $r | [range(1; 9) as $i | $r | contains("p\($i).x")] | all' first second
 
       touch $out
     ''
