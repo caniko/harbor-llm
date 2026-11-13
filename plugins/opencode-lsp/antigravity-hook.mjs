@@ -9,7 +9,7 @@
 // server.js) and places upstream/ beside this file.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -55,26 +55,27 @@ export async function check(root, files) {
 async function main(input) {
   const root = process.cwd();
   const state = path.join(tmpdir(), "harbor-lsp-antigravity",
-    `${createHash("sha256").update(String(input.conversationId ?? "")).digest("hex").slice(0, 16)}.json`);
-  const pending = JSON.parse(await readFile(state, "utf8").catch(() => "[]"));
+    `${createHash("sha256").update(String(input.conversationId ?? "")).digest("hex").slice(0, 16)}`);
   const edited = editedFiles(input.toolCall, root);
   if (edited.length) {
+    // Appends, not rewrites: Antigravity may run hooks for parallel edits at once.
     await mkdir(path.dirname(state), { recursive: true });
-    await writeFile(state, JSON.stringify([...new Set([...pending, ...edited])]));
+    await appendFile(state, edited.map((file) => `${file}\n`).join(""));
     return {};
   }
-  if (!pending.length) return {};
-  // Forget first: a check that fails or times out must not repeat on every call.
-  await writeFile(state, "[]");
+  // Claim the pending list atomically, and forget it before checking: a check
+  // that fails or times out must not repeat on every call.
+  const claimed = `${state}.${process.pid}`;
+  if (!(await rename(state, claimed).then(() => true, () => false))) return {};
+  const pending = [...new Set((await readFile(claimed, "utf8")).split("\n").filter(Boolean))];
+  await rm(claimed, { force: true });
   const report = await check(root, pending);
   return report ? { decision: "deny", reason: report } : {};
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const done = (result) => {
-    process.stdout.write(JSON.stringify(result));
-    process.exit(0);
-  };
+  // Exit once the reply is flushed: a cut-off reply is invalid JSON, which denies.
+  const done = (result) => process.stdout.write(JSON.stringify(result), () => process.exit(0));
   setTimeout(() => done({}), BUDGET_MS).unref();
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
