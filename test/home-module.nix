@@ -72,4 +72,13 @@ in
   assert v1.programs.opencode.settings ? plugin && !(v1.programs.opencode.settings ? plugins);
   assert v2.programs.opencode.settings ? plugins && !(v2.programs.opencode.settings ? plugin);
   assert (builtins.head v2.programs.opencode.settings.plugins).options.roots == ["/workspaces/example"];
-    pkgs.writeText "harbor-llm-home-module" "ok"
+    pkgs.runCommand "harbor-llm-home-module" {nativeBuildInputs = [pkgs.jq pkgs.nodejs];} ''
+      cli=${lib.getExe disabled.programs.harborLlm.lsp.cli}
+      jq -e --arg cli "$cli" '.lspServers["harbor-rust"] == {command: $cli, args: ["serve", ".rs"], extensionToLanguage: {".rs": "rust"}}
+        and .lspServers["harbor-javascript"].extensionToLanguage[".tsx"] == "typescriptreact"' \
+        ${disabled.programs.harborLlm.lsp.claudeCodePlugin}/.claude-plugin/plugin.json
+      ext=${disabled.programs.harborLlm.lsp.vscodeExtension}
+      grep -qF "\"$cli\"" $ext/extension.js
+      node -e 'require.resolve("vscode-languageclient/node", {paths: [process.argv[1]]})' $ext
+      touch $out
+    ''

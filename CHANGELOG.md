@@ -1,5 +1,10 @@
 # Changelog
 ## [Unreleased]
+- Add the Harbor LSP bridge: `harbor-llm-lsp list|serve` resolves a project's
+  Harbor LSP map (committed `.opencode/opencode.jsonc` plus the devshell's
+  `OPENCODE_CONFIG_CONTENT`) and runs its servers in the project environment.
+  `programs.harborLlm.lsp` exposes a Claude Code plugin and a VS Code extension
+  (for Antigravity IDE) built on it.
 - Report an entered native preparation without completion proof as
   `EXECUTION_OUTCOME_UNKNOWN` (reconciling), including after cancellation or
   timeout; the last cancelled waiter now surfaces it. Ported from the wip
