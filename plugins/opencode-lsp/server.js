@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import upstream from "./upstream/index.ts";
 import { resolveSettings } from "./upstream/src/config.ts";
 
-const cli = "@cli@";
+export const cli = "@cli@";
 
 // Upstream deep-merges plugin options over every config document, so the
 // Harbor map must be authoritative: switch off whatever else it would load and
