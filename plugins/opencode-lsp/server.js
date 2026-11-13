@@ -13,6 +13,8 @@ const cli = "@cli@";
 // Harbor map must be authoritative: switch off whatever else it would load and
 // clear inherited `disabled` flags on Harbor's servers.
 export function harborOptions(root, options, servers) {
+  // An explicit `lsp: false` switches every server off, Harbor's included.
+  if (options.lsp === false) return options;
   const lsp = {};
   for (const { id } of resolveSettings(root, options).servers) lsp[id] = { disabled: true };
   for (const [name, server] of Object.entries(servers)) {

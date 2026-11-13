@@ -105,6 +105,7 @@ in
         const project = process.argv[2];
         const servers = resolveSettings(project, harborOptions(project, {}, {y: {command: ["y"], extensions: [".y"]}})).servers;
         assert.deepEqual(servers.map((s) => [s.id, s.command[1], s.command[2]]), [["y", "serve", "y"]]);
+        assert.deepEqual(resolveSettings(project, harborOptions(project, {lsp: false}, {})).servers, []);
       ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project
       touch $out
     ''
