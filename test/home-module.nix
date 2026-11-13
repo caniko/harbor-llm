@@ -107,5 +107,21 @@ in
         assert.deepEqual(servers.map((s) => [s.id, s.command[1], s.command[2]]), [["y", "serve", "y"]]);
         assert.deepEqual(resolveSettings(project, harborOptions(project, {lsp: false}, {})).servers, []);
       ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project
+
+      # Antigravity hook: edits are recorded, the next other call reports the
+      # red file once, and clean files stay silent.
+      hooks=${disabled.programs.harborLlm.lsp.antigravityHooks}
+      command=$(jq -er '.["harbor-lsp"].PreToolUse[0].hooks[0].command' $hooks)
+      mkdir -p red/.opencode
+      echo '{"lsp":{"fake":{"command":["node","${./fake-lsp.mjs}"],"extensions":[".x"]}}}' > red/.opencode/opencode.jsonc
+      echo BAD > red/a.x
+      echo ok > red/b.x
+      hook() { (cd red && echo "{\"toolCall\":$1,\"conversationId\":\"c\"}" | HOME=$PWD $command); }
+      [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"a.x"}}')" = "{}" ]
+      [ "$(hook '{"name":"replace_file_content","args":{"TargetFile":"b.x"}}')" = "{}" ]
+      hook '{"name":"run_command","args":{}}' | jq -e '.decision == "deny" and (.reason | contains("a.x") and contains("BAD is not allowed") and (contains("b.x") | not))'
+      [ "$(hook '{"name":"run_command","args":{}}')" = "{}" ]
+      [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"b.x"}}')" = "{}" ]
+      [ "$(hook '{"name":"view_file","args":{"AbsolutePath":"b.x"}}')" = "{}" ]
       touch $out
     ''

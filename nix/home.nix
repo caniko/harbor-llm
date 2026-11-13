@@ -108,6 +108,12 @@ in {
         default = lsp.opencodePlugin;
         description = "OpenCode v2 plugin directory serving Harbor LSP servers through opencode-v2-lsp-support; add it to `plugins`.";
       };
+      antigravityHooks = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = lsp.antigravityHooks;
+        description = "Antigravity `hooks.json` reporting Harbor LSP errors in the files the agent edited, at its next tool call; place it at `$GEMINI_HOME/config/hooks.json`.";
+      };
       vscodeExtension = lib.mkOption {
         type = lib.types.package;
         readOnly = true;

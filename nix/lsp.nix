@@ -72,7 +72,7 @@
     yaml.yaml = [".yaml" ".yml"];
     zig.zig = [".zig"];
   };
-in {
+in rec {
   inherit cli;
 
   # Load with CLAUDE_CODE_PLUGIN_DIRS (environment or settings `env`).
@@ -107,8 +107,26 @@ in {
       hash = "sha256-6jjXI1j1idbQuj6j8NWzsW4/JPBPoUYltHXd16dP7Xw=";
     }} $out/upstream
     substitute ${runtime}/plugins/opencode-lsp/server.js $out/server.js --replace-fail @cli@ ${lib.getExe cli}
+    cp ${runtime}/plugins/opencode-lsp/antigravity-hook.mjs $out/
     ln -s ${runtime}/node_modules $out/node_modules
   '';
+
+  # Antigravity `hooks.json` (`$GEMINI_HOME/config/hooks.json`): a PreToolUse
+  # hook over the same vendored client that reports LSP errors in edited files.
+  antigravityHooks = pkgs.writeText "harbor-llm-antigravity-hooks.json" (builtins.toJSON {
+    harbor-lsp.PreToolUse = [
+      {
+        matcher = "*";
+        hooks = [
+          {
+            type = "command";
+            command = "${lib.getExe pkgs.nodejs} ${opencodePlugin}/antigravity-hook.mjs";
+            timeout = 90;
+          }
+        ];
+      }
+    ];
+  });
 
   # VS Code extension directory (publisher.name layout), e.g. for a builtin
   # `resources/app/extensions` entry of a VS Code fork such as Antigravity.

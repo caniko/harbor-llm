@@ -395,6 +395,11 @@ artifacts built on the configured CLI:
   committed file's per server. Add it to `plugins`.
 - `lsp.vscodeExtension`: a VS Code extension that starts every server in each
   workspace folder's map, e.g. as a builtin extension of Antigravity IDE.
+- `lsp.antigravityHooks`: an Antigravity agent `hooks.json`
+  (`$GEMINI_HOME/config/hooks.json`). Its PreToolUse hook records the files
+  edit calls name and checks them at the next other tool call: clean files
+  pass silently, errors deny that one call with the report. Antigravity drops
+  PostToolUse output, so a denial is the only way to reach the model.
 
 ## Checks
 
