@@ -95,6 +95,21 @@ in {
     };
   };
 
+  # OpenCode v2 plugin directory: plugins/opencode-lsp over the pinned
+  # opencode-v2-lsp-support (MIT). Upstream is copied, not linked, so its
+  # imports resolve harbor-llm's node_modules (smol-toml) beside it.
+  opencodePlugin = pkgs.runCommand "harbor-llm-opencode-lsp" {} ''
+    mkdir -p $out
+    cp -r ${pkgs.fetchFromGitHub {
+      owner = "christensenjairus";
+      repo = "opencode-v2-lsp-support";
+      rev = "e055c985c4aeef9a557093832bf2c36fbe99a549";
+      hash = "sha256-6jjXI1j1idbQuj6j8NWzsW4/JPBPoUYltHXd16dP7Xw=";
+    }} $out/upstream
+    substitute ${runtime}/plugins/opencode-lsp/server.js $out/server.js --replace-fail @cli@ ${lib.getExe cli}
+    ln -s ${runtime}/node_modules $out/node_modules
+  '';
+
   # VS Code extension directory (publisher.name layout), e.g. for a builtin
   # `resources/app/extensions` entry of a VS Code fork such as Antigravity.
   vscodeExtension = pkgs.runCommand "harbor-lsp-vscode" {} ''

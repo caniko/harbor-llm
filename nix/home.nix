@@ -102,6 +102,12 @@ in {
         default = lsp.claudeCodePlugin;
         description = "Claude Code plugin directory serving Harbor LSP servers; load it with CLAUDE_CODE_PLUGIN_DIRS.";
       };
+      opencodePlugin = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = lsp.opencodePlugin;
+        description = "OpenCode v2 plugin directory serving Harbor LSP servers through opencode-v2-lsp-support; add it to `plugins`.";
+      };
       vscodeExtension = lib.mkOption {
         type = lib.types.package;
         readOnly = true;

@@ -80,5 +80,23 @@ in
       ext=${disabled.programs.harborLlm.lsp.vscodeExtension}
       grep -qF "\"$cli\"" $ext/extension.js
       node -e 'require.resolve("vscode-languageclient/node", {paths: [process.argv[1]]})' $ext
+      # The v2 plugin serves a committed-file server through the CLI (no roots: file only).
+      mkdir -p project/.opencode
+      echo '{"lsp":{"x":{"command":["x"],"extensions":[".x"]}}}' > project/.opencode/opencode.jsonc
+      HOME=$PWD node --input-type=module -e '
+        import assert from "node:assert/strict";
+        const plugin = (await import(process.argv[1] + "/server.js")).default;
+        const tools = [];
+        const dispose = await plugin.setup({
+          location: {directory: process.argv[2]},
+          tool: {
+            transform: async (f) => (f({add: (t) => tools.push(t)}), {dispose: async () => {}}),
+            hook: async () => ({dispose: async () => {}}),
+          },
+        });
+        assert.equal(typeof dispose, "function");
+        assert.equal(tools.length, 1);
+        await dispose();
+      ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project
       touch $out
     ''

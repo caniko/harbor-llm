@@ -87,7 +87,10 @@ export async function resolveLsp(dir, environments) {
 
 async function main([command, ...args]) {
   const options = JSON.parse(await readFile(process.env.HARBOR_LLM_LSP_OPTIONS, "utf8"));
-  const environments = createProjectEnvironments({ ...options, direnvApproval: "manual", baseline: process.env });
+  // Without roots no `.envrc` may run: every lookup falls back to the committed file.
+  const environments = options.roots?.length
+    ? createProjectEnvironments({ ...options, direnvApproval: "manual", baseline: process.env })
+    : { resolve: async () => { throw new Error("no lsp.roots configured"); } };
   if (command === "list") {
     process.stdout.write(`${JSON.stringify((await resolveLsp(args[0] ?? process.cwd(), environments)).servers)}\n`);
     return;

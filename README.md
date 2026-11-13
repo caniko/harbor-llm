@@ -375,7 +375,7 @@ project-independent setup in language Harbor hooks, such as Harbor's Cargo cache
 
 A project's Harbor LSP map is OpenCode `lsp` config: the committed
 `.opencode/opencode.jsonc` plus the `OPENCODE_CONFIG_CONTENT` its devshell
-exports. OpenCode reads it natively; other harnesses get it through
+exports. Harnesses get it through
 `harbor-llm-lsp`, which resolves the project environment with the same resolver
 as the adapters above (manual approval only):
 
@@ -390,6 +390,9 @@ artifacts built on the configured CLI:
 
 - `lsp.claudeCodePlugin`: a Claude Code plugin with one lazily started server
   per language family. Load it with `CLAUDE_CODE_PLUGIN_DIRS`.
+- `lsp.opencodePlugin`: an OpenCode v2 plugin (v2 has no LSP runtime) over the
+  pinned, MIT-licensed `opencode-v2-lsp-support`; Harbor entries replace the
+  committed file's per server. Add it to `plugins`.
 - `lsp.vscodeExtension`: a VS Code extension that starts every server in each
   workspace folder's map, e.g. as a builtin extension of Antigravity IDE.
 
