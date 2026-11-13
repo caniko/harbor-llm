@@ -62,7 +62,9 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.30",
-    "@opencode/client": "2.0.22"
+    "@opencode/client": "2.0.22",
+    "smol-toml": "1.9.1",
+    "vscode-languageclient": "9.0.1"
   },
   "devDependencies": {
     "typescript": "7.0.2"

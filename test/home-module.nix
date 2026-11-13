@@ -72,4 +72,40 @@ in
   assert v1.programs.opencode.settings ? plugin && !(v1.programs.opencode.settings ? plugins);
   assert v2.programs.opencode.settings ? plugins && !(v2.programs.opencode.settings ? plugin);
   assert (builtins.head v2.programs.opencode.settings.plugins).options.roots == ["/workspaces/example"];
-    pkgs.writeText "harbor-llm-home-module" "ok"
+    pkgs.runCommand "harbor-llm-home-module" {nativeBuildInputs = [pkgs.jq pkgs.nodejs];} ''
+      cli=${lib.getExe disabled.programs.harborLlm.lsp.cli}
+      jq -e --arg cli "$cli" '.lspServers["harbor-rust"] == {command: $cli, args: ["serve", ".rs"], extensionToLanguage: {".rs": "rust"}}
+        and .lspServers["harbor-javascript"].extensionToLanguage[".tsx"] == "typescriptreact"' \
+        ${disabled.programs.harborLlm.lsp.claudeCodePlugin}/.claude-plugin/plugin.json
+      ext=${disabled.programs.harborLlm.lsp.vscodeExtension}
+      grep -qF "\"$cli\"" $ext/extension.js
+      node -e 'require.resolve("vscode-languageclient/node", {paths: [process.argv[1]]})' $ext
+      # The v2 plugin serves a committed-file server through the CLI (no roots: file only).
+      mkdir -p project/.opencode
+      echo '{"lsp":{"x":{"command":["x"],"extensions":[".x"]},"y":{"command":["y"],"extensions":[".y"],"disabled":true}}}' > project/.opencode/opencode.jsonc
+      HOME=$PWD node --input-type=module -e '
+        import assert from "node:assert/strict";
+        const plugin = (await import(process.argv[1] + "/server.js")).default;
+        const tools = [];
+        const dispose = await plugin.setup({
+          location: {directory: process.argv[2]},
+          tool: {
+            transform: async (f) => (f({add: (t) => tools.push(t)}), {dispose: async () => {}}),
+            hook: async () => ({dispose: async () => {}}),
+          },
+        });
+        assert.equal(typeof dispose, "function");
+        assert.equal(tools.length, 1);
+        await dispose();
+
+        // Harbor is authoritative in both directions: the devshell disabled the
+        // committed `x` and re-enabled the committed-disabled `y`.
+        const {harborOptions} = await import(process.argv[1] + "/server.js");
+        const {resolveSettings} = await import(process.argv[1] + "/upstream/src/config.ts");
+        const project = process.argv[2];
+        const servers = resolveSettings(project, harborOptions(project, {}, {y: {command: ["y"], extensions: [".y"]}})).servers;
+        assert.deepEqual(servers.map((s) => [s.id, s.command[1], s.command[2]]), [["y", "serve", "y"]]);
+        assert.deepEqual(resolveSettings(project, harborOptions(project, {lsp: false}, {})).servers, []);
+      ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project
+      touch $out
+    ''

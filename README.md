@@ -371,6 +371,31 @@ Temporary-directory variables are reset after capture; arbitrary references
 to transient files cannot be repaired automatically. Use persistent,
 project-independent setup in language Harbor hooks, such as Harbor's Cargo cache.
 
+### LSP bridge
+
+A project's Harbor LSP map is OpenCode `lsp` config: the committed
+`.opencode/opencode.jsonc` plus the `OPENCODE_CONFIG_CONTENT` its devshell
+exports. Harnesses get it through
+`harbor-llm-lsp`, which resolves the project environment with the same resolver
+as the adapters above (manual approval only):
+
+```sh
+harbor-llm-lsp list [DIR]                  # {name: {command, extensions, env?, initialization?}}
+harbor-llm-lsp serve SELECTOR[,...] [DIR]  # run the first server named SELECTOR or serving `.ext`
+```
+
+`programs.harborLlm.lsp.roots` bounds where an approved `.envrc` may run;
+elsewhere only the committed file applies. The module exposes read-only
+artifacts built on the configured CLI:
+
+- `lsp.claudeCodePlugin`: a Claude Code plugin with one lazily started server
+  per language family. Load it with `CLAUDE_CODE_PLUGIN_DIRS`.
+- `lsp.opencodePlugin`: an OpenCode v2 plugin (v2 has no LSP runtime) over the
+  pinned, MIT-licensed `opencode-v2-lsp-support`; Harbor entries replace the
+  committed file's per server. Add it to `plugins`.
+- `lsp.vscodeExtension`: a VS Code extension that starts every server in each
+  workspace folder's map, e.g. as a builtin extension of Antigravity IDE.
+
 ## Checks
 
 ```sh

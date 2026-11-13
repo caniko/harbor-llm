@@ -96,7 +96,7 @@
         npmDeps = pkgs.importNpmLock {npmRoot = ./.;};
         installPhase = ''
           mkdir -p $out/lib/harbor-llm
-          cp -r src plugins contracts protocol python node_modules package.json $out/lib/harbor-llm/
+          cp -r src plugins editors contracts protocol python node_modules package.json $out/lib/harbor-llm/
         '';
       };
     });

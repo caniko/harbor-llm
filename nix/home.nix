@@ -19,6 +19,18 @@ self: {
   registry = assert lib.all (context: !(context.allOutputs or false)) (builtins.attrValues (builtins.getContext registryText));
     pkgs.writeText "harbor-llm-registry.json" registryText;
   runtime = "${cfg.package}/lib/harbor-llm/src";
+  lsp = import ./lsp.nix {
+    inherit pkgs;
+    inherit (cfg) package;
+    options = {
+      inherit (cfg.lsp) roots;
+      direnv = lib.getExe pkgs.direnv;
+      nix = lib.getExe pkgs.nix;
+      setsid = "${pkgs.util-linux}/bin/setsid";
+      flock = "${pkgs.util-linux}/bin/flock";
+      system = pkgs.stdenv.hostPlatform.system;
+    };
+  };
   opencodeSettings =
     if cfg.opencode.apiVersion == "v1"
     then {
@@ -70,6 +82,38 @@ in {
           shells = lib.mkOption {type = lib.types.attrsOf lib.types.package;};
         };
       });
+    };
+    lsp = {
+      roots = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = lib.mapAttrsToList (_: project: project.root) cfg.projects;
+        defaultText = lib.literalExpression "project roots from programs.harborLlm.projects";
+        description = "Absolute roots inside which an already approved `.envrc` may run to resolve a project's Harbor LSP map. Elsewhere only the committed `.opencode/opencode.jsonc` applies. Never approves an `.envrc`.";
+      };
+      cli = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = lsp.cli;
+        description = "`harbor-llm-lsp`: lists a project's Harbor LSP map and serves its servers in the project environment.";
+      };
+      claudeCodePlugin = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = lsp.claudeCodePlugin;
+        description = "Claude Code plugin directory serving Harbor LSP servers; load it with CLAUDE_CODE_PLUGIN_DIRS.";
+      };
+      opencodePlugin = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = lsp.opencodePlugin;
+        description = "OpenCode v2 plugin directory serving Harbor LSP servers through opencode-v2-lsp-support; add it to `plugins`.";
+      };
+      vscodeExtension = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = lsp.vscodeExtension;
+        description = "VS Code extension directory serving Harbor LSP servers, for VS Code forks such as Antigravity.";
+      };
     };
     opencode.enable = lib.mkEnableOption "OpenCode environment replacement adapter";
     opencode.apiVersion = lib.mkOption {

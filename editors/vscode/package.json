@@ -1,0 +1,15 @@
+{
+  "name": "harbor-lsp",
+  "displayName": "Harbor LSP",
+  "description": "Starts the language servers a project's Harbor LSP map declares.",
+  "publisher": "harbor",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ]
+}
