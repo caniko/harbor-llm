@@ -1,0 +1,75 @@
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -19,6 +19,8 @@
+   readonly diagnosticsTimeoutMs: number
+   readonly initializeTimeoutMs: number
+   readonly requestTimeoutMs: number
++  /** Stop a server nobody has used for this long; the next use restarts it. */
++  readonly idleTimeoutMs: number
+   readonly debug: boolean
+ }
+ 
+@@ -42,6 +44,7 @@
+     diagnosticsTimeoutMs: positive(options.diagnosticsTimeoutMs, 5_000),
+     initializeTimeoutMs: positive(options.initializeTimeoutMs, 45_000),
+     requestTimeoutMs: positive(options.requestTimeoutMs, 15_000),
++    idleTimeoutMs: positive(options.idleTimeoutMs, 600_000),
+     debug,
+   }
+ }
+--- a/src/manager.ts
++++ b/src/manager.ts
+@@ -30,6 +30,8 @@
+   starting?: Promise<LspClient>
+   broken?: string
+   warmed?: boolean
++  /** Last time a caller asked for this server. */
++  used?: number
+   readonly opened: Set<string>
+ }
+ 
+@@ -145,10 +147,28 @@
+   readonly #listeners = new Map<string, Set<() => void>>()
+   readonly #queues = new Map<string, Promise<void>>()
+   #closed = false
++  readonly #reaper: ReturnType<typeof setInterval>
+ 
+   constructor(settings: Settings, root: string) {
+     this.#settings = settings
+     this.#root = root
++    // A long-lived manager meets many roots (one server per Cargo workspace,
++    // say), so idle servers stop instead of holding memory until shutdown.
++    this.#reaper = setInterval(() => this.#reap(), Math.min(settings.idleTimeoutMs, 60_000))
++    this.#reaper.unref()
++  }
++
++  /** Stop servers idle past the timeout. Their entry stays, so the next use restarts them. */
++  #reap(): void {
++    const cutoff = Date.now() - this.#settings.idleTimeoutMs
++    for (const [key, entry] of this.#entries) {
++      const client = entry.client
++      if (!client?.running || entry.starting || (entry.used ?? 0) > cutoff) continue
++      entry.client = undefined
++      entry.warmed = false
++      this.#log(`${key} idle, stopping`)
++      void client.stop()
++    }
+   }
+ 
+   serversFor(file: string): ServerConfig[] {
+@@ -393,6 +413,7 @@
+       entry = { opened: new Set() }
+       this.#entries.set(key, entry)
+     }
++    entry.used = Date.now()
+     if (entry.client?.failure) entry.broken = entry.client.failure.message
+     if (entry.broken) throw new Error(entry.broken)
+     if (entry.client?.running) return entry.client
+@@ -459,6 +480,7 @@
+ 
+   async shutdown(): Promise<void> {
+     this.#closed = true
++    clearInterval(this.#reaper)
+     const entries = [...this.#entries.values()]
+     this.#entries.clear()
+     await Promise.all(
