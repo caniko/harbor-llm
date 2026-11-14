@@ -123,7 +123,22 @@ in
         await first.release();
         await first.release();
         assert.equal(acquire(project, settings, map).manager, first.manager);
-      ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project
+
+        // A server idle past idleTimeoutMs stops; the next use restarts it and
+        // reopens the file, so diagnostics still arrive.
+        const {LspManager} = await import(process.argv[1] + "/upstream/src/manager.ts");
+        (await import("node:fs")).writeFileSync(project + "/a.z", "BAD");
+        const fake = {fake: {command: [process.execPath, process.argv[3]], extensions: [".z"]}};
+        const idle = new LspManager(resolveSettings(project, {idleTimeoutMs: 50, lsp: fake}), project);
+        const [cold] = await idle.sync(project + "/a.z");
+        assert.ok(cold.client.running);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.equal(cold.client.running, false);
+        const [warm] = await idle.sync(project + "/a.z");
+        assert.ok(warm.client.running && warm.client !== cold.client);
+        assert.equal((await idle.diagnostics(project + "/a.z")).file?.[0]?.message, "BAD is not allowed");
+        await idle.shutdown();
+      ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project ${./fake-lsp.mjs}
 
       # Antigravity hook: edits are recorded, the next other call reports the
       # red file once, and clean files stay silent.

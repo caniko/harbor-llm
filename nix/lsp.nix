@@ -97,7 +97,9 @@ in rec {
 
   # OpenCode v2 plugin directory: plugins/opencode-lsp over the pinned
   # opencode-v2-lsp-support (MIT). Upstream is copied, not linked, so its
-  # imports resolve harbor-llm's node_modules (smol-toml) beside it.
+  # imports resolve harbor-llm's node_modules (smol-toml) beside it. The patch
+  # stops servers idle for `idleTimeoutMs` (default 10 min): one serve process
+  # otherwise keeps a rust-analyzer for every Cargo workspace it ever touched.
   opencodePlugin = pkgs.runCommand "harbor-llm-opencode-lsp" {} ''
     mkdir -p $out
     cp -r ${pkgs.fetchFromGitHub {
@@ -106,6 +108,8 @@ in rec {
       rev = "e055c985c4aeef9a557093832bf2c36fbe99a549";
       hash = "sha256-6jjXI1j1idbQuj6j8NWzsW4/JPBPoUYltHXd16dP7Xw=";
     }} $out/upstream
+    chmod -R u+w $out/upstream
+    patch -d $out/upstream -p1 < ${./opencode-lsp-idle.patch}
     substitute ${runtime}/plugins/opencode-lsp/server.js $out/server.js --replace-fail @cli@ ${lib.getExe cli}
     cp ${runtime}/plugins/opencode-lsp/antigravity-hook.mjs $out/
     ln -s ${runtime}/node_modules $out/node_modules
