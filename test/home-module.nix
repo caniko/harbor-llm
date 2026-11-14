@@ -106,6 +106,23 @@ in
         const servers = resolveSettings(project, harborOptions(project, {}, {y: {command: ["y"], extensions: [".y"]}})).servers;
         assert.deepEqual(servers.map((s) => [s.id, s.command[1], s.command[2]]), [["y", "serve", "y"]]);
         assert.deepEqual(resolveSettings(project, harborOptions(project, {lsp: false}, {})).servers, []);
+
+        // Sessions of one serve process share a manager per root, settings and
+        // Harbor map; only the last release shuts it down. A devshell change
+        // that only moves the fingerprint still gets its own manager.
+        const {acquire} = await import(process.argv[1] + "/server.js");
+        const map = {y: {command: ["y"], extensions: [".y"], fingerprint: "a"}};
+        const settings = resolveSettings(project, harborOptions(project, {}, map));
+        const first = acquire(project, settings, map);
+        const second = acquire(project, settings, map);
+        assert.equal(first.manager, second.manager);
+        assert.notEqual(acquire(project + "/other", settings, map).manager, first.manager);
+        const bumped = {y: {...map.y, fingerprint: "b"}};
+        assert.deepEqual(resolveSettings(project, harborOptions(project, {}, bumped)), settings);
+        assert.notEqual(acquire(project, settings, bumped).manager, first.manager);
+        await first.release();
+        await first.release();
+        assert.equal(acquire(project, settings, map).manager, first.manager);
       ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project
 
       # Antigravity hook: edits are recorded, the next other call reports the

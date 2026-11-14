@@ -4,8 +4,10 @@
 // runs in the project environment. The package build substitutes @cli@.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import upstream from "./upstream/index.ts";
 import { resolveSettings } from "./upstream/src/config.ts";
+import { afterTool } from "./upstream/src/diagnostics.ts";
+import { LspManager } from "./upstream/src/manager.ts";
+import { lspTool } from "./upstream/src/tool.ts";
 
 export const cli = "@cli@";
 
@@ -28,17 +30,60 @@ export function harborOptions(root, options, servers) {
   return { ...options, lsp: { ...options.lsp, ...lsp } };
 }
 
+// OpenCode sets up a location for every session, and upstream starts one
+// manager, and so one server process, each time. A manager is root-scoped and
+// already shares startup and serializes each file, so sessions of one serve
+// process share it per (root, settings, Harbor map) and the last one shuts it
+// down. The map's fingerprints carry the command and environment that
+// `harborOptions` hides behind the CLI wrapper.
+const managers = new Map();
+export function acquire(root, settings, servers) {
+  const key = JSON.stringify([root, settings, servers]);
+  let entry = managers.get(key);
+  if (!entry) managers.set(key, (entry = { manager: new LspManager(settings, root), refs: 0 }));
+  entry.refs++;
+  let released = false;
+  return {
+    manager: entry.manager,
+    async release() {
+      if (released) return;
+      released = true;
+      if (--entry.refs > 0) return;
+      managers.delete(key);
+      await entry.manager.shutdown();
+    },
+  };
+}
+
 export default {
   id: "harbor-llm.lsp",
   async setup(ctx) {
     const root = ctx.location.directory;
     let options = ctx.options ?? {};
+    let servers = {};
     try {
-      const servers = JSON.parse((await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 })).stdout);
+      servers = JSON.parse((await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 })).stdout);
       options = harborOptions(root, options, servers);
     } catch (error) {
       console.error(`[harbor-llm.lsp] ${root}: ${error.message}`);
     }
-    return upstream.setup({ ...ctx, options });
+    // Upstream's setup, over a shared manager.
+    const settings = resolveSettings(root, options);
+    if (settings.debug) console.error(`[lsp] servers: ${settings.servers.map((server) => server.id).join(", ") || "none"}`);
+    if (settings.servers.length === 0) return;
+    const { manager, release } = acquire(root, settings, servers);
+    const disposers = [];
+    try {
+      disposers.push(await ctx.tool.transform((editor) => editor.add(lspTool(manager, root))));
+      disposers.push(await ctx.tool.hook("execute.after", afterTool(manager, root, settings.diagnostics)));
+    } catch (error) {
+      for (const disposer of disposers.reverse()) await disposer.dispose();
+      await release();
+      throw error;
+    }
+    return async () => {
+      for (const disposer of disposers.reverse()) await disposer.dispose();
+      await release();
+    };
   },
 };
