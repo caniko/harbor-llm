@@ -4,13 +4,14 @@
 // devshell exports. Harnesses that cannot read either from the project's
 // environment use this CLI:
 //
-//   harbor-llm-lsp list [DIR]                  print {name: {command, extensions, env?, initialization?}}
+//   harbor-llm-lsp list [DIR]                  print {name: {command, extensions, env?, initialization?, fingerprint}}
 //   harbor-llm-lsp serve SELECTOR[,...] [DIR]  run the first server named SELECTOR or serving `.ext`
 //
 // The environment comes from the same project-environment resolver as the
 // OpenCode adapter, from HARBOR_LLM_LSP_OPTIONS (a JSON file). It never
 // approves an `.envrc`.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { constants } from "node:os";
 import path from "node:path";
@@ -92,7 +93,16 @@ async function main([command, ...args]) {
     ? createProjectEnvironments({ ...options, direnvApproval: "manual", baseline: process.env })
     : { resolve: async () => { throw new Error("no lsp.roots configured"); } };
   if (command === "list") {
-    process.stdout.write(`${JSON.stringify((await resolveLsp(args[0] ?? process.cwd(), environments)).servers)}\n`);
+    // The fingerprint hashes the command and environment `serve` would run, so
+    // callers that share a server notice a changed devshell (a toolchain bump
+    // may change only PATH under a bare `rust-analyzer` command). direnv's own
+    // DIRENV_* bookkeeping moves with file mtimes alone, so it stays out.
+    const { env, servers } = await resolveLsp(args[0] ?? process.cwd(), environments);
+    for (const server of Object.values(servers)) {
+      const effective = Object.entries({ ...env, ...server.env }).filter(([name]) => !name.startsWith("DIRENV_"));
+      server.fingerprint = createHash("sha256").update(JSON.stringify([server.command, effective])).digest("hex");
+    }
+    process.stdout.write(`${JSON.stringify(servers)}\n`);
     return;
   }
   if (command !== "serve" || !args[0]) throw new Error("usage: harbor-llm-lsp list [DIR] | serve SELECTOR[,...] [DIR]");

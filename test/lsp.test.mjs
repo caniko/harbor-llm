@@ -32,15 +32,23 @@ test("serve runs the devshell's server in the approved project environment", {
   await mkdir(`${project}/.opencode`, { recursive: true });
   // Echoes stdin with a variable only the project's .envrc sets.
   const echo = [process.execPath, "-e", 'process.stdin.on("data", (d) => process.stdout.write(d + ":" + process.env.PROBE))'];
-  await writeFile(`${project}/.envrc`, `export PROBE=approved\nexport OPENCODE_CONFIG_CONTENT='${JSON.stringify({ lsp: { echo: { command: echo, extensions: [".x"] } } })}'\n`);
+  await writeFile(`${project}/.envrc`, `mkdir -p .direnv && touch .direnv/profile.rc\nwatch_file .direnv/profile.rc\nexport PROBE=approved\nexport OPENCODE_CONFIG_CONTENT='${JSON.stringify({ lsp: { echo: { command: echo, extensions: [".x"] } } })}'\n`);
   await writeFile(`${project}/.opencode/opencode.jsonc`, JSON.stringify({ lsp: { filed: { command: ["filed"], extensions: [".y"] } } }));
   await writeFile(env.HARBOR_LLM_LSP_OPTIONS, JSON.stringify({ roots: [root], direnv: process.env.DIRENV_BIN, nix: process.env.NIX_BIN, system: "x86_64-linux" }));
   const list = async () => JSON.parse((await promisify(execFile)(process.execPath, [cli, "list", project], { env })).stdout);
 
   // Unapproved: only the committed file applies.
-  assert.deepEqual(Object.keys(await list()), ["filed"]);
+  const unapproved = await list();
+  assert.deepEqual(Object.keys(unapproved), ["filed"]);
   await promisify(execFile)(process.env.DIRENV_BIN, ["allow", project], { env });
-  assert.deepEqual(Object.keys(await list()), ["filed", "echo"]);
+  const approved = await list();
+  assert.deepEqual(Object.keys(approved), ["filed", "echo"]);
+  // Same command, new environment: the fingerprint moves.
+  assert.notEqual(approved.filed.fingerprint, unapproved.filed.fingerprint);
+  // Like nix-direnv's retention, every load touches a watched file: direnv's
+  // bookkeeping moves, the environment does not.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal((await list()).filed.fingerprint, approved.filed.fingerprint);
 
   const child = spawn(process.execPath, [cli, "serve", ".z,.x", project], { env, stdio: ["pipe", "pipe", "inherit"] });
   child.stdin.end("ping");
