@@ -70,9 +70,11 @@ test("serve merges the agent profile into initialize and passes the rest through
   injectInitialize(input, output, { ...AGENT_DEFAULTS.rust, ...project });
   const initialize = frame({ jsonrpc: "2.0", id: 1, method: "initialize", params: { initializationOptions: client } });
   const later = frame({ jsonrpc: "2.0", method: "initialized", params: {} });
-  // Split mid-header to cover a message arriving in pieces.
-  input.write(initialize.slice(0, 10));
-  input.end(initialize.slice(10) + later);
+  // Split mid-header to cover a message arriving in pieces; a look-alike
+  // header must not be read as the length.
+  const tricky = `X-Content-Length: 1\r\n${initialize}`;
+  input.write(tricky.slice(0, 10));
+  input.end(tricky.slice(10) + later);
   let text = "";
   for await (const chunk of output) text += chunk;
   const [header, rest] = text.split("\r\n\r\n", 2);

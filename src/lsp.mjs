@@ -17,6 +17,7 @@
 // approves an `.envrc`.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { constants } from "node:os";
 import path from "node:path";
@@ -99,7 +100,7 @@ export function injectInitialize(input, output, options) {
     buffer = Buffer.concat([buffer, chunk]);
     const end = buffer.indexOf("\r\n\r\n");
     if (end < 0) return;
-    const length = Number(/content-length:\s*(\d+)/i.exec(buffer.subarray(0, end).toString())?.[1]);
+    const length = Number(/(?:^|\r\n)content-length:[ \t]*(\d+)[ \t]*(?:\r\n|$)/i.exec(buffer.subarray(0, end).toString())?.[1]);
     if (!Number.isInteger(length)) return flush();
     const start = end + 4;
     if (buffer.length < start + length) return;
@@ -174,14 +175,23 @@ async function main([command, ...args]) {
   const initialization = process.env.HARBOR_LLM_LSP_PROFILE === "editor"
     ? server.initialization
     : merge(AGENT_DEFAULTS[name], server.initialization);
-  const argv = [...(options.wrapper ?? []), ...server.command];
+  // The wrapper is a user-systemd scope: without a user bus (a sandboxed
+  // harness) it cannot start, and a server run directly beats none.
+  const socket = /unix:path=([^,;]+)/.exec(env.DBUS_SESSION_BUS_ADDRESS ?? "")?.[1]
+    ?? (env.XDG_RUNTIME_DIR && path.join(env.XDG_RUNTIME_DIR, "bus"));
+  const bus = Boolean(socket) && existsSync(socket);
+  const argv = [...(bus ? options.wrapper ?? [] : []), ...server.command];
   // stdout carries the protocol: the server owns it from here.
   const child = spawn(argv[0], argv.slice(1), {
     cwd: root,
     env: { ...env, ...server.env },
     stdio: [initialization ? "pipe" : "inherit", "inherit", "inherit"],
   });
-  if (initialization) injectInitialize(process.stdin, child.stdin, initialization);
+  if (initialization) {
+    // A server that exits mid-write must still report its own exit status.
+    child.stdin.on("error", () => process.stdin.unpipe(child.stdin));
+    injectInitialize(process.stdin, child.stdin, initialization);
+  }
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
   child.on("error", (error) => {
     console.error(`harbor-llm-lsp: cannot start ${name}: ${error.message}`);
