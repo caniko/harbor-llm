@@ -138,11 +138,27 @@ in
         assert.ok(warm.client.running && warm.client !== cold.client);
         assert.equal((await idle.diagnostics(project + "/a.z")).file?.[0]?.message, "BAD is not allowed");
         await idle.shutdown();
-        // A server that cannot start leaves the file unchecked, not clean.
+        // A server that cannot start leaves the file unchecked, not clean, and
+        // the edit result says so.
         const gone = {gone: {command: ["/nonexistent/lsp"], extensions: [".z"]}};
         const broken = new LspManager(resolveSettings(project, {lsp: gone}), project);
-        assert.equal((await broken.diagnostics(project + "/a.z")).unavailable, true);
+        assert.match((await broken.diagnostics(project + "/a.z")).unavailable ?? "", /^gone: /);
+        const {afterTool} = await import(process.argv[1] + "/upstream/src/diagnostics.ts");
+        const edit = {tool: "write", status: "completed", input: {path: project + "/a.z"}, result: {output: "ok"}};
+        await afterTool(broken, project, true)(edit);
+        assert.match(JSON.stringify(edit.result), /could not check/);
         await broken.shutdown();
+        // A server that does not apply (deno without a Deno marker) is not a failed one.
+        const denoless = new LspManager(resolveSettings(project, {lsp: {deno: {command: ["/nonexistent/lsp"], extensions: [".z"]}}}), project);
+        assert.equal((await denoless.diagnostics(project + "/a.z")).unavailable, undefined);
+        await denoless.shutdown();
+        // Nor is a file the manager cannot read while its server runs.
+        const fs = await import("node:fs");
+        fs.writeFileSync(project + "/locked.z", "BAD");
+        fs.chmodSync(project + "/locked.z", 0);
+        const reading = new LspManager(resolveSettings(project, {lsp: fake}), project);
+        assert.equal((await reading.diagnostics(project + "/locked.z")).unavailable, undefined);
+        await reading.shutdown();
       ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project ${./fake-lsp.mjs}
 
       # Antigravity hook: edits are recorded, the next other call reports the
@@ -166,7 +182,8 @@ in
       echo ok > gone/c.x
       gonehook() { (cd gone && echo "{\"toolCall\":$1,\"conversationId\":\"g\"}" | HOME=$PWD $command); }
       [ "$(gonehook '{"name":"write_to_file","args":{"TargetFile":"c.x"}}')" = "{}" ]
-      gonehook '{"name":"run_command","args":{}}' | jq -e '.decision == "deny" and (.reason | contains("LSP unavailable") and contains("c.x"))'
+      gonehook '{"name":"run_command","args":{}}' | jq -e '.decision == "deny" and (.reason | contains("could not check") and contains("c.x") and (contains("please fix") | not))'
+      [ "$(gonehook '{"name":"run_command","args":{}}')" = "{}" ]
       # Edit hooks running beside each other and beside a check lose no file.
       for i in 1 2 3 4 5 6 7 8; do echo BAD > red/p$i.x; done
       for round in 1 2 3 4 5; do

@@ -6,7 +6,7 @@
      for (const [uri, diagnostics] of result.others) others.set(uri, diagnostics)
 +    const where = event.tool === "patch" || event.tool === "apply_patch" ? displayPath(file, root) : "this file"
 +    if (result.unavailable) {
-+      sections.push(`LSP unavailable for ${where}: its language server did not start, so its errors were not checked.`)
++      sections.push(`LSP could not check ${where}: its language server failed to start (${result.unavailable}). Its errors are unknown, not absent; check it another way, such as the project's compiler or tests.`)
 +      continue
 +    }
      const errors = errorsOnly(result.file ?? [])
@@ -21,16 +21,24 @@
    readonly file?: Diagnostic[]
    /** Other files whose diagnostics a server published while this file was checked. */
    readonly others: Map<string, Diagnostic[]>
-+  /** None of the file's servers could start: nothing checked it, which is not clean. */
-+  readonly unavailable?: boolean
++  /** Why every server that applies to the file failed to start: nothing checked it, which is not clean. */
++  readonly unavailable?: string
  }
  
  /** A file's extension, or `.name` for an extensionless file such as `Dockerfile`. */
-@@ -280,6 +282,7 @@
+@@ -280,6 +282,15 @@
        this.#log(`${file}: ${errorMessage(error)}`)
        return []
      })
-+    if (synced.length === 0) return { others: new Map(), unavailable: true }
++    if (synced.length === 0) {
++      // Only startup failure counts: a server that does not apply to the file, or a file
++      // that could not be read, is not an unavailable server.
++      const targets = await this.#targets(file)
++      const broken = targets.map((target) => this.#entries.get(target.key)?.broken)
++      if (targets.length > 0 && broken.every(Boolean)) {
++        return { others: new Map(), unavailable: targets.map((target, index) => `${target.key}: ${broken[index]}`).join("; ") }
++      }
++    }
      return this.#reports(file, synced, timeoutMs, signal)
    }
  

@@ -46,16 +46,19 @@ export async function check(root, files) {
       if (!(await stat(file).then((s) => s.isFile(), () => false))) continue;
       const result = await manager.diagnostics(file);
       if (result.unavailable) {
-        unchecked.push(file);
+        unchecked.push(`${path.relative(root, file)} (${result.unavailable})`);
         continue;
       }
       const report = diagnosticsReport(file, result.file ?? []);
       if (report) sections.push(report);
     }
+    const parts = [];
+    if (sections.length) parts.push(`LSP errors in files you edited, please fix:\n${sections.join("\n")}`);
+    // Not a source error: the agent should validate another way, not keep editing.
     if (unchecked.length) {
-      sections.push(`LSP unavailable: no language server started for ${unchecked.map((file) => path.relative(root, file)).join(", ")}, so their errors were not checked.`);
+      parts.push(`LSP could not check files you edited, because their language server failed to start: ${unchecked.join(", ")}. Their errors are unknown, not absent; check them another way, such as the project's compiler or tests.`);
     }
-    return sections.length ? `LSP errors in files you edited, please fix:\n${sections.join("\n")}` : "";
+    return parts.join("\n\n");
   } finally {
     await manager.shutdown();
   }
