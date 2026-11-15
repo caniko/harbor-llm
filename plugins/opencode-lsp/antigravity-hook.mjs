@@ -33,20 +33,32 @@ export function editedFiles(call, root) {
     .map(([, value]) => path.resolve(root, value));
 }
 
-/** The report for files with errors, or "" when they are clean. */
+/** The report for files with errors or no running server, or "" when they are clean. */
 export async function check(root, files) {
   const servers = JSON.parse((await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 })).stdout);
   const settings = resolveSettings(root, harborOptions(root, {}, servers));
   const manager = new LspManager(settings, root);
   try {
     const sections = [];
+    const unchecked = [];
     for (const file of files) {
       if (!manager.serversFor(file).length || !(await insideProject(root, file))) continue;
       if (!(await stat(file).then((s) => s.isFile(), () => false))) continue;
-      const report = diagnosticsReport(file, (await manager.diagnostics(file)).file ?? []);
+      const result = await manager.diagnostics(file);
+      if (result.unavailable) {
+        unchecked.push(`${path.relative(root, file)} (${result.unavailable})`);
+        continue;
+      }
+      const report = diagnosticsReport(file, result.file ?? []);
       if (report) sections.push(report);
     }
-    return sections.length ? `LSP errors in files you edited, please fix:\n${sections.join("\n")}` : "";
+    const parts = [];
+    if (sections.length) parts.push(`LSP errors in files you edited, please fix:\n${sections.join("\n")}`);
+    // Not a source error: the agent should validate another way, not keep editing.
+    if (unchecked.length) {
+      parts.push(`LSP could not check files you edited, because their language server failed to start: ${unchecked.join(", ")}. Their errors are unknown, not absent; check them another way, such as the project's compiler or tests.`);
+    }
+    return parts.join("\n\n");
   } finally {
     await manager.shutdown();
   }
