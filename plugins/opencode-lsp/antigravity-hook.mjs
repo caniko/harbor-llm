@@ -33,18 +33,27 @@ export function editedFiles(call, root) {
     .map(([, value]) => path.resolve(root, value));
 }
 
-/** The report for files with errors, or "" when they are clean. */
+/** The report for files with errors or no running server, or "" when they are clean. */
 export async function check(root, files) {
   const servers = JSON.parse((await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 })).stdout);
   const settings = resolveSettings(root, harborOptions(root, {}, servers));
   const manager = new LspManager(settings, root);
   try {
     const sections = [];
+    const unchecked = [];
     for (const file of files) {
       if (!manager.serversFor(file).length || !(await insideProject(root, file))) continue;
       if (!(await stat(file).then((s) => s.isFile(), () => false))) continue;
-      const report = diagnosticsReport(file, (await manager.diagnostics(file)).file ?? []);
+      const result = await manager.diagnostics(file);
+      if (result.unavailable) {
+        unchecked.push(file);
+        continue;
+      }
+      const report = diagnosticsReport(file, result.file ?? []);
       if (report) sections.push(report);
+    }
+    if (unchecked.length) {
+      sections.push(`LSP unavailable: no language server started for ${unchecked.map((file) => path.relative(root, file)).join(", ")}, so their errors were not checked.`);
     }
     return sections.length ? `LSP errors in files you edited, please fix:\n${sections.join("\n")}` : "";
   } finally {

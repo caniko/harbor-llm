@@ -100,6 +100,8 @@ in rec {
   # imports resolve harbor-llm's node_modules (smol-toml) beside it. The patch
   # stops servers idle for `idleTimeoutMs` (default 10 min): one serve process
   # otherwise keeps a rust-analyzer for every Cargo workspace it ever touched.
+  # The second reports a file whose servers could not start as unchecked,
+  # instead of as clean.
   opencodePlugin = pkgs.runCommand "harbor-llm-opencode-lsp" {} ''
     mkdir -p $out
     cp -r ${pkgs.fetchFromGitHub {
@@ -110,6 +112,7 @@ in rec {
     }} $out/upstream
     chmod -R u+w $out/upstream
     patch -d $out/upstream -p1 < ${./opencode-lsp-idle.patch}
+    patch -d $out/upstream -p1 < ${./opencode-lsp-unavailable.patch}
     substitute ${runtime}/plugins/opencode-lsp/server.js $out/server.js --replace-fail @cli@ ${lib.getExe cli}
     cp ${runtime}/plugins/opencode-lsp/antigravity-hook.mjs $out/
     ln -s ${runtime}/node_modules $out/node_modules

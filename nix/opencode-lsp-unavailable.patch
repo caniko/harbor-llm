@@ -1,0 +1,36 @@
+--- a/src/diagnostics.ts
++++ b/src/diagnostics.ts
+@@ -57,9 +57,13 @@
+   for (const [index, file] of files.entries()) {
+     const result = results[index]
+     for (const [uri, diagnostics] of result.others) others.set(uri, diagnostics)
++    const where = event.tool === "patch" || event.tool === "apply_patch" ? displayPath(file, root) : "this file"
++    if (result.unavailable) {
++      sections.push(`LSP unavailable for ${where}: its language server did not start, so its errors were not checked.`)
++      continue
++    }
+     const errors = errorsOnly(result.file ?? [])
+     if (errors.length === 0) continue
+-    const where = event.tool === "patch" || event.tool === "apply_patch" ? displayPath(file, root) : "this file"
+     sections.push(`LSP errors detected in ${where}, please fix:\n${diagnosticsReport(file, errors)}`)
+     shown[file] = errors
+     shown[displayPath(file, root)] = errors
+--- a/src/manager.ts
++++ b/src/manager.ts
+@@ -53,6 +53,8 @@
+   readonly file?: Diagnostic[]
+   /** Other files whose diagnostics a server published while this file was checked. */
+   readonly others: Map<string, Diagnostic[]>
++  /** None of the file's servers could start: nothing checked it, which is not clean. */
++  readonly unavailable?: boolean
+ }
+ 
+ /** A file's extension, or `.name` for an extensionless file such as `Dockerfile`. */
+@@ -280,6 +282,7 @@
+       this.#log(`${file}: ${errorMessage(error)}`)
+       return []
+     })
++    if (synced.length === 0) return { others: new Map(), unavailable: true }
+     return this.#reports(file, synced, timeoutMs, signal)
+   }
+ 

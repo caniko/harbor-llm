@@ -138,6 +138,11 @@ in
         assert.ok(warm.client.running && warm.client !== cold.client);
         assert.equal((await idle.diagnostics(project + "/a.z")).file?.[0]?.message, "BAD is not allowed");
         await idle.shutdown();
+        // A server that cannot start leaves the file unchecked, not clean.
+        const gone = {gone: {command: ["/nonexistent/lsp"], extensions: [".z"]}};
+        const broken = new LspManager(resolveSettings(project, {lsp: gone}), project);
+        assert.equal((await broken.diagnostics(project + "/a.z")).unavailable, true);
+        await broken.shutdown();
       ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project ${./fake-lsp.mjs}
 
       # Antigravity hook: edits are recorded, the next other call reports the
@@ -155,6 +160,13 @@ in
       [ "$(hook '{"name":"run_command","args":{}}')" = "{}" ]
       [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"b.x"}}')" = "{}" ]
       [ "$(hook '{"name":"view_file","args":{"AbsolutePath":"b.x"}}')" = "{}" ]
+      # A file whose server cannot start is reported as unchecked.
+      mkdir -p gone/.opencode
+      echo '{"lsp":{"gone":{"command":["/nonexistent/lsp"],"extensions":[".x"]}}}' > gone/.opencode/opencode.jsonc
+      echo ok > gone/c.x
+      gonehook() { (cd gone && echo "{\"toolCall\":$1,\"conversationId\":\"g\"}" | HOME=$PWD $command); }
+      [ "$(gonehook '{"name":"write_to_file","args":{"TargetFile":"c.x"}}')" = "{}" ]
+      gonehook '{"name":"run_command","args":{}}' | jq -e '.decision == "deny" and (.reason | contains("LSP unavailable") and contains("c.x"))'
       # Edit hooks running beside each other and beside a check lose no file.
       for i in 1 2 3 4 5 6 7 8; do echo BAD > red/p$i.x; done
       for round in 1 2 3 4 5; do
