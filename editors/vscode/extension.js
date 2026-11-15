@@ -24,7 +24,8 @@ exports.activate = async () => {
     }
     for (const [name, server] of Object.entries(servers)) {
       const client = new LanguageClient(`harbor-${name}`, `Harbor ${name}`,
-        { command: cli, args: ["serve", name, root], options: { cwd: root } },
+        // The editor keeps the server's full features, not the agent profile.
+        { command: cli, args: ["serve", name, root], options: { cwd: root, env: { ...process.env, HARBOR_LLM_LSP_PROFILE: "editor" } } },
         {
           documentSelector: server.extensions.map((extension) => ({ scheme: "file", pattern: `${root}/**/*${extension}` })),
           workspaceFolder: folder,
