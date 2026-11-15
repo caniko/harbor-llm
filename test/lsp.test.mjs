@@ -6,7 +6,8 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { mergeLsp, pick } from "../src/lsp.mjs";
+import { AGENT_DEFAULTS, injectInitialize, mergeLsp, pick } from "../src/lsp.mjs";
+import { PassThrough } from "node:stream";
 
 const cli = fileURLToPath(new URL("../src/lsp.mjs", import.meta.url));
 
@@ -55,4 +56,31 @@ test("serve runs the devshell's server in the approved project environment", {
   let output = "";
   for await (const chunk of child.stdout) output += chunk;
   assert.equal(output, "ping:approved");
+});
+
+test("serve merges the agent profile into initialize and passes the rest through", async () => {
+  const frame = (message) => {
+    const body = JSON.stringify(message);
+    return `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+  };
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const project = { checkOnSave: true, cargo: { features: ["admin"] } };
+  const client = { cachePriming: { numThreads: 2 } };
+  injectInitialize(input, output, { ...AGENT_DEFAULTS.rust, ...project });
+  const initialize = frame({ jsonrpc: "2.0", id: 1, method: "initialize", params: { initializationOptions: client } });
+  const later = frame({ jsonrpc: "2.0", method: "initialized", params: {} });
+  // Split mid-header to cover a message arriving in pieces.
+  input.write(initialize.slice(0, 10));
+  input.end(initialize.slice(10) + later);
+  let text = "";
+  for await (const chunk of output) text += chunk;
+  const [header, rest] = text.split("\r\n\r\n", 2);
+  const length = Number(/Content-Length: (\d+)/.exec(header)[1]);
+  const options = JSON.parse(rest.slice(0, length)).params.initializationOptions;
+  assert.equal(options.checkOnSave, true, "the project map outranks agent defaults");
+  assert.deepEqual(options.cargo.features, ["admin"]);
+  assert.deepEqual(options.cachePriming, { enable: false, numThreads: 2 }, "client options merge last");
+  assert.equal(options.files.watcher, "server");
+  assert.equal(text.slice(header.length + 4 + length), later);
 });

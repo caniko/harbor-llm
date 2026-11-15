@@ -7,6 +7,11 @@
 //   harbor-llm-lsp list [DIR]                  print {name: {command, extensions, env?, initialization?, fingerprint}}
 //   harbor-llm-lsp serve SELECTOR[,...] [DIR]  run the first server named SELECTOR or serving `.ext`
 //
+// `serve` gives agent harnesses an agent profile: AGENT_DEFAULTS under the
+// project map's `initialization` under the client's own initializationOptions,
+// merged into `initialize`. HARBOR_LLM_LSP_PROFILE=editor keeps only the last two.
+// An options `wrapper` (argv prefix, e.g. systemd-run --scope) runs each server.
+//
 // The environment comes from the same project-environment resolver as the
 // OpenCode adapter, from HARBOR_LLM_LSP_OPTIONS (a JSON file). It never
 // approves an `.envrc`.
@@ -55,6 +60,63 @@ export function mergeLsp(file, shell) {
     };
   }
   return servers;
+}
+
+// What agents need from a server: diagnostics and navigation for files they
+// edit on disk, without background work they never read.
+export const AGENT_DEFAULTS = {
+  rust: {
+    // Agents run `cargo check` themselves, under admission; flycheck would
+    // contend for the target dir inside the LSP's memory limit.
+    checkOnSave: false,
+    cachePriming: { enable: false },
+    // Agents write files without didChange.
+    files: { watcher: "server" },
+    numThreads: 4,
+  },
+};
+
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+export function merge(base, over) {
+  if (!isObject(base) || !isObject(over)) return over === undefined ? base : over;
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(over)) merged[key] = merge(base[key], value);
+  return merged;
+}
+
+// Rewrites the client's first message when it is `initialize`, then pipes the
+// rest untouched.
+export function injectInitialize(input, output, options) {
+  let buffer = Buffer.alloc(0);
+  const flush = () => {
+    input.off("data", onData);
+    input.off("end", onEnd);
+    output.write(buffer);
+    input.pipe(output);
+  };
+  const onEnd = () => output.end(buffer);
+  const onData = (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    const end = buffer.indexOf("\r\n\r\n");
+    if (end < 0) return;
+    const length = Number(/content-length:\s*(\d+)/i.exec(buffer.subarray(0, end).toString())?.[1]);
+    if (!Number.isInteger(length)) return flush();
+    const start = end + 4;
+    if (buffer.length < start + length) return;
+    let message;
+    try {
+      message = JSON.parse(buffer.subarray(start, start + length).toString());
+    } catch {
+      return flush();
+    }
+    if (message?.method !== "initialize") return flush();
+    message.params = { ...message.params, initializationOptions: merge(options, message.params?.initializationOptions) };
+    const body = Buffer.from(JSON.stringify(message));
+    buffer = Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`), body, buffer.subarray(start + length)]);
+    flush();
+  };
+  input.on("data", onData);
+  input.on("end", onEnd);
 }
 
 export function pick(servers, selectors) {
@@ -109,8 +171,17 @@ async function main([command, ...args]) {
   const { root, env, servers } = await resolveLsp(args[1] ?? process.cwd(), environments);
   const [name, server] = pick(servers, args[0].split(",")) ?? [];
   if (!server) throw new Error(`no Harbor LSP server for ${args[0]} in ${root}`);
+  const initialization = process.env.HARBOR_LLM_LSP_PROFILE === "editor"
+    ? server.initialization
+    : merge(AGENT_DEFAULTS[name], server.initialization);
+  const argv = [...(options.wrapper ?? []), ...server.command];
   // stdout carries the protocol: the server owns it from here.
-  const child = spawn(server.command[0], server.command.slice(1), { cwd: root, env: { ...env, ...server.env }, stdio: "inherit" });
+  const child = spawn(argv[0], argv.slice(1), {
+    cwd: root,
+    env: { ...env, ...server.env },
+    stdio: [initialization ? "pipe" : "inherit", "inherit", "inherit"],
+  });
+  if (initialization) injectInitialize(process.stdin, child.stdin, initialization);
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
   child.on("error", (error) => {
     console.error(`harbor-llm-lsp: cannot start ${name}: ${error.message}`);

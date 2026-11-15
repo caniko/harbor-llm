@@ -23,7 +23,7 @@ self: {
     inherit pkgs;
     inherit (cfg) package;
     options = {
-      inherit (cfg.lsp) roots;
+      inherit (cfg.lsp) roots wrapper;
       direnv = lib.getExe pkgs.direnv;
       nix = lib.getExe pkgs.nix;
       setsid = "${pkgs.util-linux}/bin/setsid";
@@ -89,6 +89,12 @@ in {
         default = lib.mapAttrsToList (_: project: project.root) cfg.projects;
         defaultText = lib.literalExpression "project roots from programs.harborLlm.projects";
         description = "Absolute roots inside which an already approved `.envrc` may run to resolve a project's Harbor LSP map. Elsewhere only the committed `.opencode/opencode.jsonc` applies. Never approves an `.envrc`.";
+      };
+      wrapper = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        example = ["systemd-run" "--user" "--scope" "--quiet" "--collect" "--slice=agent-lsp.slice" "-p" "MemoryMax=8G" "--"];
+        description = "Argv prefix `harbor-llm-lsp serve` runs each server under, such as a systemd scope with its own memory limit, so a runaway server cannot take its harness down with it.";
       };
       cli = lib.mkOption {
         type = lib.types.package;
