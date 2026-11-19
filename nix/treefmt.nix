@@ -13,6 +13,8 @@
   ];
   projectRootFile = "flake.nix";
   programs.rustfmt.edition = "2021";
+  # The pinned JavaScript helper does not yet cover TypeScript ES modules.
+  settings.formatter.prettier.includes = ["*.mts"];
   settings.excludes = [
     ".github/workflows/*.yaml"
     # Shared wire contracts, conformance vectors, and fixtures.
