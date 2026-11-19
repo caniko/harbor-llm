@@ -5,7 +5,8 @@ export declare const MCP_ADMISSION_LIMITS: Readonly<{
   endpointCharacters: 2048;
   policyBytes: number;
 }>;
-export declare const MCP_ADMISSION_IDENTIFIER_PATTERN = "^[\\u0021-\\u007e]{1,128}(?![\\s\\S])";
+export declare const MCP_ADMISSION_IDENTIFIER_PATTERN =
+  "^[\\u0021-\\u007e]{1,128}(?![\\s\\S])";
 type IdentifierSchema = {
   readonly type: "string";
   readonly pattern: typeof MCP_ADMISSION_IDENTIFIER_PATTERN;
@@ -29,7 +30,12 @@ export declare const mcpAdmissionPolicySchema: {
       readonly additionalProperties: {
         readonly type: "object";
         readonly additionalProperties: false;
-        readonly required: readonly ["url", "gatewayUrl", "serverHostId", "executionHostIds"];
+        readonly required: readonly [
+          "url",
+          "gatewayUrl",
+          "serverHostId",
+          "executionHostIds",
+        ];
         readonly properties: {
           readonly url: EndpointSchema;
           readonly gatewayUrl: EndpointSchema;
@@ -50,7 +56,12 @@ export declare const mcpRunBindingSchema: {
   readonly title: "MCP run delivery binding v1";
   readonly type: "object";
   readonly additionalProperties: false;
-  readonly required: readonly ["runId", "executionHostId", "serverHostId", "gatewayUrl"];
+  readonly required: readonly [
+    "runId",
+    "executionHostId",
+    "serverHostId",
+    "gatewayUrl",
+  ];
   readonly properties: {
     readonly runId: IdentifierSchema;
     readonly executionHostId: IdentifierSchema;

@@ -18,7 +18,8 @@ export function harborOptions(root, options, servers) {
   // An explicit `lsp: false` switches every server off, Harbor's included.
   if (options.lsp === false) return options;
   const lsp = {};
-  for (const { id } of resolveSettings(root, options).servers) lsp[id] = { disabled: true };
+  for (const { id } of resolveSettings(root, options).servers)
+    lsp[id] = { disabled: true };
   for (const [name, server] of Object.entries(servers)) {
     lsp[name] = {
       command: [cli, "serve", name, root],
@@ -40,7 +41,11 @@ const managers = new Map();
 export function acquire(root, settings, servers) {
   const key = JSON.stringify([root, settings, servers]);
   let entry = managers.get(key);
-  if (!entry) managers.set(key, (entry = { manager: new LspManager(settings, root), refs: 0 }));
+  if (!entry)
+    managers.set(
+      key,
+      (entry = { manager: new LspManager(settings, root), refs: 0 }),
+    );
   entry.refs++;
   let released = false;
   return {
@@ -62,20 +67,35 @@ export default {
     let options = ctx.options ?? {};
     let servers = {};
     try {
-      servers = JSON.parse((await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 })).stdout);
+      servers = JSON.parse(
+        (await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 }))
+          .stdout,
+      );
       options = harborOptions(root, options, servers);
     } catch (error) {
       console.error(`[harbor-llm.lsp] ${root}: ${error.message}`);
     }
     // Upstream's setup, over a shared manager.
     const settings = resolveSettings(root, options);
-    if (settings.debug) console.error(`[lsp] servers: ${settings.servers.map((server) => server.id).join(", ") || "none"}`);
+    if (settings.debug)
+      console.error(
+        `[lsp] servers: ${settings.servers.map((server) => server.id).join(", ") || "none"}`,
+      );
     if (settings.servers.length === 0) return;
     const { manager, release } = acquire(root, settings, servers);
     const disposers = [];
     try {
-      disposers.push(await ctx.tool.transform((editor) => editor.add(lspTool(manager, root))));
-      disposers.push(await ctx.tool.hook("execute.after", afterTool(manager, root, settings.diagnostics)));
+      disposers.push(
+        await ctx.tool.transform((editor) =>
+          editor.add(lspTool(manager, root)),
+        ),
+      );
+      disposers.push(
+        await ctx.tool.hook(
+          "execute.after",
+          afterTool(manager, root, settings.diagnostics),
+        ),
+      );
     } catch (error) {
       for (const disposer of disposers.reverse()) await disposer.dispose();
       await release();

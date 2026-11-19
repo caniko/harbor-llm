@@ -22,27 +22,46 @@ export interface McpAdmissionPolicy {
   servers: Record<string, McpAdmissionRule>;
 }
 export type McpAdmissionReason =
-  | "invalid_identity" | "invalid_policy" | "too_many_servers" | "duplicate_server"
-  | "server_not_authorized" | "endpoint_mismatch" | "execution_host_not_authorized"
-  | "unsafe_endpoint" | "binding_mismatch";
+  | "invalid_identity"
+  | "invalid_policy"
+  | "too_many_servers"
+  | "duplicate_server"
+  | "server_not_authorized"
+  | "endpoint_mismatch"
+  | "execution_host_not_authorized"
+  | "unsafe_endpoint"
+  | "binding_mismatch";
 export declare class McpAdmissionError extends Error {
   readonly code: "runtime_mcp_admission_blocked";
   readonly reason: McpAdmissionReason;
   constructor(reason: McpAdmissionReason);
 }
-export declare function isMcpAdmissionIdentifier(value: unknown): value is string;
+export declare function isMcpAdmissionIdentifier(
+  value: unknown,
+): value is string;
 export declare function requireMcpCredentialEndpoint(value: unknown): string;
-export declare function parseMcpAdmissionPolicy(value: unknown): McpAdmissionPolicy;
-export declare function bindMcpServersToRun<T extends McpAdmissionServer>(input: {
+export declare function parseMcpAdmissionPolicy(
+  value: unknown,
+): McpAdmissionPolicy;
+export declare function bindMcpServersToRun<
+  T extends McpAdmissionServer,
+>(input: {
   servers: readonly T[];
   runId: string;
   executionHostId?: string | null;
   policy?: unknown;
 }): Array<Omit<T, "runBinding"> & { runBinding: McpRunBinding }>;
-export declare function requireMcpRunBinding(value: unknown, expected: {
-  runId: string;
-  executionHostId: string;
-  gatewayUrl: string;
-  normalizeRecipient?: (url: string) => string | null;
-}): McpRunBinding;
-export { MCP_ADMISSION_LIMITS, mcpAdmissionPolicySchema, mcpRunBindingSchema } from "./mcp-admission-schema.mjs";
+export declare function requireMcpRunBinding(
+  value: unknown,
+  expected: {
+    runId: string;
+    executionHostId: string;
+    gatewayUrl: string;
+    normalizeRecipient?: (url: string) => string | null;
+  },
+): McpRunBinding;
+export {
+  MCP_ADMISSION_LIMITS,
+  mcpAdmissionPolicySchema,
+  mcpRunBindingSchema,
+} from "./mcp-admission-schema.mjs";

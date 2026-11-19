@@ -22,8 +22,18 @@ def norm(path):
     return path.replace("\\", "/").strip().lstrip("/")
 
 
-TEX = {"\\": r"\textbackslash{}", "{": r"\{", "}": r"\}", "$": r"\$", "&": r"\&", "#": r"\#",
-       "^": r"\^{}", "_": r"\_", "%": r"\%", "~": r"\~{}"}
+TEX = {
+    "\\": r"\textbackslash{}",
+    "{": r"\{",
+    "}": r"\}",
+    "$": r"\$",
+    "&": r"\&",
+    "#": r"\#",
+    "^": r"\^{}",
+    "_": r"\_",
+    "%": r"\%",
+    "~": r"\~{}",
+}
 
 
 def tex(label):
@@ -46,7 +56,9 @@ def size_of(value):
         raise SystemExit(f"reconcile: invalid size {value!r}")
 
 
-def reconcile(manifest, root, delimiter, path_column, size_column=None, group_column=None):
+def reconcile(
+    manifest, root, delimiter, path_column, size_column=None, group_column=None
+):
     manifest, root = Path(manifest).resolve(), Path(root).resolve()
     with manifest.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle, delimiter=delimiter)
@@ -66,7 +78,9 @@ def reconcile(manifest, root, delimiter, path_column, size_column=None, group_co
     for row in rows:
         rel = norm(row[path_column])
         seen[rel] += 1
-        group = groups.setdefault(row.get(group_column, "") if group_column else "", collections.Counter())
+        group = groups.setdefault(
+            row.get(group_column, "") if group_column else "", collections.Counter()
+        )
         expected = size_of(row.get(size_column)) if size_column else None
         target = (root / rel).resolve()  # follows symlinks
         inside = target.is_relative_to(root)
@@ -89,7 +103,13 @@ def reconcile(manifest, root, delimiter, path_column, size_column=None, group_co
             if expected is not None:
                 group["missing_bytes"] += expected
                 totals["missing_bytes"] += expected
-            missing.append({"group": row.get(group_column, "") if group_column else "", "path": rel, "bytes": expected})
+            missing.append(
+                {
+                    "group": row.get(group_column, "") if group_column else "",
+                    "path": rel,
+                    "bytes": expected,
+                }
+            )
 
     listed = set(seen)
     unlisted = sorted(
@@ -118,7 +138,9 @@ def pct(part, whole):
 
 def write(report, missing, out):
     out.mkdir(parents=True, exist_ok=True)
-    (out / "completeness.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (out / "completeness.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     with (out / "missing.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["group", "path", "bytes"])
         writer.writeheader()
@@ -126,9 +148,25 @@ def write(report, missing, out):
     # pgfplots input for the report's completeness chart.
     with (out / "groups.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["group", "rows", "present", "missing", "expected_bytes", "missing_bytes"])
+        writer.writerow(
+            ["group", "rows", "present", "missing", "expected_bytes", "missing_bytes"]
+        )
         for name, g in report["groups"].items():
-            writer.writerow([tex(name) or "-", *(g.get(key, 0) for key in ("rows", "present", "missing", "expected_bytes", "missing_bytes"))])
+            writer.writerow(
+                [
+                    tex(name) or "-",
+                    *(
+                        g.get(key, 0)
+                        for key in (
+                            "rows",
+                            "present",
+                            "missing",
+                            "expected_bytes",
+                            "missing_bytes",
+                        )
+                    ),
+                ]
+            )
     t = report["totals"]
     lines = [
         f"# Completeness: {'complete' if report['complete'] else 'INCOMPLETE'}",
@@ -145,9 +183,15 @@ def write(report, missing, out):
     ]
     for name, g in report["groups"].items():
         if g.get("missing"):
-            lines.append(f"| {md(name)} | {g.get('rows', 0)} | {g.get('present', 0)} | {g.get('missing', 0)} | {g.get('missing_bytes', 0)} |")
+            lines.append(
+                f"| {md(name)} | {g.get('rows', 0)} | {g.get('present', 0)} | {g.get('missing', 0)} | {g.get('missing_bytes', 0)} |"
+            )
     complete_groups = sum(1 for g in report["groups"].values() if not g.get("missing"))
-    lines += ["", f"{complete_groups} of {len(report['groups'])} groups are complete and omitted from the table.", ""]
+    lines += [
+        "",
+        f"{complete_groups} of {len(report['groups'])} groups are complete and omitted from the table.",
+        "",
+    ]
     (out / "completeness.md").write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -168,16 +212,33 @@ def self_test():
         )
         report, missing = reconcile(manifest, root, ";", "chemin", "taille", "fonds")
         t = report["totals"]
-        assert (t["rows"], t["unique_paths"], t["present"], t["missing"]) == (4, 3, 3, 1), t
+        assert (t["rows"], t["unique_paths"], t["present"], t["missing"]) == (
+            4,
+            3,
+            3,
+            1,
+        ), t
         assert t["missing_bytes"] == 10 and t["expected_bytes"] == 21, t
         assert report["duplicate_paths"] == ["A/A-1/x.jpg"]
-        assert report["size_mismatches"] == [{"path": "A/A-1/bad.jpg", "expected": 3, "actual": 2}]
+        assert report["size_mismatches"] == [
+            {"path": "A/A-1/bad.jpg", "expected": 3, "actual": 2}
+        ]
         assert report["unlisted_files"] == ["extra.txt"], report["unlisted_files"]
-        assert report["groups"]["B"] == {"rows": 1, "expected_bytes": 10, "missing": 1, "missing_bytes": 10}
-        assert not report["complete"] and missing == [{"group": "B", "path": "B/B-1/gone.jpg", "bytes": 10}]
+        assert report["groups"]["B"] == {
+            "rows": 1,
+            "expected_bytes": 10,
+            "missing": 1,
+            "missing_bytes": 10,
+        }
+        assert not report["complete"] and missing == [
+            {"group": "B", "path": "B/B-1/gone.jpg", "bytes": 10}
+        ]
         write(report, missing, Path(tmp, "out"))
         assert "INCOMPLETE" in Path(tmp, "out", "completeness.md").read_text()
-        assert Path(tmp, "out", "groups.csv").read_text().splitlines()[2] == "B,1,0,1,10,10"
+        assert (
+            Path(tmp, "out", "groups.csv").read_text().splitlines()[2]
+            == "B,1,0,1,10,10"
+        )
 
         def refuses(text, *columns):
             manifest.write_text(text)
@@ -190,16 +251,25 @@ def self_test():
         assert refuses("", "chemin"), "headerless manifest"
         assert refuses("chemin\n", "chemin"), "header-only manifest"
         assert refuses("chemin\nx.jpg\n", "chemin", "taille"), "absent size column"
-        assert refuses("chemin;taille\nextra.txt;n/a\n", "chemin", "taille"), "invalid size"
+        assert refuses("chemin;taille\nextra.txt;n/a\n", "chemin", "taille"), (
+            "invalid size"
+        )
         manifest.write_text("chemin;taille\nextra.txt;\n")
-        assert reconcile(manifest, root, ";", "chemin", "taille")[0]["totals"]["present"] == 1, "blank size is optional"
+        assert (
+            reconcile(manifest, root, ";", "chemin", "taille")[0]["totals"]["present"]
+            == 1
+        ), "blank size is optional"
         assert md("a|b\nc") == "a\\|b c"
-        assert refuses("chemin\nx.jpg\n", "chemin", None, "fonds"), "absent group column"
+        assert refuses("chemin\nx.jpg\n", "chemin", None, "fonds"), (
+            "absent group column"
+        )
         (Path(tmp, "secret.txt")).write_text("s")
         (root / "link.txt").symlink_to(Path(tmp, "secret.txt"))
         manifest.write_text("chemin\n..\\secret.txt\nlink.txt\nextra.txt\n")
         escaped, _ = reconcile(manifest, root, ";", "chemin")
-        assert (escaped["totals"]["present"], escaped["totals"]["missing"]) == (1, 2), escaped["totals"]
+        assert (escaped["totals"]["present"], escaped["totals"]["missing"]) == (1, 2), (
+            escaped["totals"]
+        )
         assert tex("a_b\\input{x}$") == r"a\_b\textbackslash{}input\{x\}\$"
     print("reconcile self-test passed")
 
@@ -210,7 +280,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest")
     parser.add_argument("root")
-    parser.add_argument("--out", required=True, type=Path, help="output directory outside ROOT")
+    parser.add_argument(
+        "--out", required=True, type=Path, help="output directory outside ROOT"
+    )
     parser.add_argument("--path-column", required=True)
     parser.add_argument("--size-column")
     parser.add_argument("--group-column")
@@ -218,11 +290,20 @@ def main():
     args = parser.parse_args()
     if args.out.resolve().is_relative_to(Path(args.root).resolve()):
         parser.error("--out must lie outside ROOT")
-    report, missing = reconcile(args.manifest, args.root, args.delimiter, args.path_column, args.size_column, args.group_column)
+    report, missing = reconcile(
+        args.manifest,
+        args.root,
+        args.delimiter,
+        args.path_column,
+        args.size_column,
+        args.group_column,
+    )
     write(report, missing, args.out)
     t = report["totals"]
-    print(f"{'complete' if report['complete'] else 'INCOMPLETE'}: {t.get('present', 0)}/{t.get('rows', 0)} rows present, "
-          f"{t.get('missing', 0)} missing, {len(report['size_mismatches'])} size mismatches -> {args.out}")
+    print(
+        f"{'complete' if report['complete'] else 'INCOMPLETE'}: {t.get('present', 0)}/{t.get('rows', 0)} rows present, "
+        f"{t.get('missing', 0)} missing, {len(report['size_mismatches'])} size mismatches -> {args.out}"
+    )
     return 0 if report["complete"] else 2
 
 

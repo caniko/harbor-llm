@@ -9,7 +9,15 @@
 // server.js) and places upstream/ beside this file.
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -27,23 +35,45 @@ const PATH_ARG = /file|path/i;
 
 /** Files an edit call names, resolved against the workspace. */
 export function editedFiles(call, root) {
-  if (!call || !EDIT_TOOL.test(call.name ?? "") || !call.args || typeof call.args !== "object") return [];
+  if (
+    !call ||
+    !EDIT_TOOL.test(call.name ?? "") ||
+    !call.args ||
+    typeof call.args !== "object"
+  )
+    return [];
   return Object.entries(call.args)
-    .filter(([key, value]) => PATH_ARG.test(key) && typeof value === "string" && value)
+    .filter(
+      ([key, value]) =>
+        PATH_ARG.test(key) && typeof value === "string" && value,
+    )
     .map(([, value]) => path.resolve(root, value));
 }
 
 /** The report for files with errors or no running server, or "" when they are clean. */
 export async function check(root, files) {
-  const servers = JSON.parse((await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 })).stdout);
+  const servers = JSON.parse(
+    (await promisify(execFile)(cli, ["list", root], { maxBuffer: 8 << 20 }))
+      .stdout,
+  );
   const settings = resolveSettings(root, harborOptions(root, {}, servers));
   const manager = new LspManager(settings, root);
   try {
     const sections = [];
     const unchecked = [];
     for (const file of files) {
-      if (!manager.serversFor(file).length || !(await insideProject(root, file))) continue;
-      if (!(await stat(file).then((s) => s.isFile(), () => false))) continue;
+      if (
+        !manager.serversFor(file).length ||
+        !(await insideProject(root, file))
+      )
+        continue;
+      if (
+        !(await stat(file).then(
+          (s) => s.isFile(),
+          () => false,
+        ))
+      )
+        continue;
       const result = await manager.diagnostics(file);
       if (result.unavailable) {
         unchecked.push(`${path.relative(root, file)} (${result.unavailable})`);
@@ -53,10 +83,15 @@ export async function check(root, files) {
       if (report) sections.push(report);
     }
     const parts = [];
-    if (sections.length) parts.push(`LSP errors in files you edited, please fix:\n${sections.join("\n")}`);
+    if (sections.length)
+      parts.push(
+        `LSP errors in files you edited, please fix:\n${sections.join("\n")}`,
+      );
     // Not a source error: the agent should validate another way, not keep editing.
     if (unchecked.length) {
-      parts.push(`LSP could not check files you edited, because their language server failed to start: ${unchecked.join(", ")}. Their errors are unknown, not absent; check them another way, such as the project's compiler or tests.`);
+      parts.push(
+        `LSP could not check files you edited, because their language server failed to start: ${unchecked.join(", ")}. Their errors are unknown, not absent; check them another way, such as the project's compiler or tests.`,
+      );
     }
     return parts.join("\n\n");
   } finally {
@@ -67,7 +102,13 @@ export async function check(root, files) {
 async function main(input) {
   const root = process.cwd();
   const base = path.join(tmpdir(), "harbor-lsp-antigravity");
-  const state = path.join(base, createHash("sha256").update(String(input.conversationId ?? "")).digest("hex").slice(0, 16));
+  const state = path.join(
+    base,
+    createHash("sha256")
+      .update(String(input.conversationId ?? ""))
+      .digest("hex")
+      .slice(0, 16),
+  );
   const unique = `${process.pid}-${randomUUID()}`;
   const edited = editedFiles(input.toolCall, root);
   if (edited.length) {
@@ -85,7 +126,13 @@ async function main(input) {
   const files = [];
   for (const name of await readdir(state).catch(() => [])) {
     const claimed = path.join(base, `.${unique}-${name}`);
-    if (!(await rename(path.join(state, name), claimed).then(() => true, () => false))) continue;
+    if (
+      !(await rename(path.join(state, name), claimed).then(
+        () => true,
+        () => false,
+      ))
+    )
+      continue;
     files.push(...JSON.parse(await readFile(claimed, "utf8")));
     await rm(claimed, { force: true });
   }
@@ -96,12 +143,16 @@ async function main(input) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // Exit once the reply is flushed: a cut-off reply is invalid JSON, which denies.
-  const done = (result) => process.stdout.write(JSON.stringify(result), () => process.exit(0));
+  const done = (result) =>
+    process.stdout.write(JSON.stringify(result), () => process.exit(0));
   setTimeout(() => done({}), BUDGET_MS).unref();
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  main(JSON.parse(Buffer.concat(chunks).toString() || "{}")).then(done, (error) => {
-    console.error(`harbor-lsp antigravity hook: ${error.message}`);
-    done({});
-  });
+  main(JSON.parse(Buffer.concat(chunks).toString() || "{}")).then(
+    done,
+    (error) => {
+      console.error(`harbor-lsp antigravity hook: ${error.message}`);
+      done({});
+    },
+  );
 }

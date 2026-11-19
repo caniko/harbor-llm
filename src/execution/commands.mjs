@@ -1,13 +1,20 @@
 /** Versioned command data only. Decoding never dispatches or grants authority. */
 import { schema, schemaDigest } from "./command-schema.mjs";
-import { decodeWithSchema, encodeWithSchema, validateDefinition, ProtocolError } from "./protocol.mjs";
+import {
+  decodeWithSchema,
+  encodeWithSchema,
+  validateDefinition,
+  ProtocolError,
+} from "./protocol.mjs";
 import { encodeJson, parseJson } from "../json.mjs";
 import { createHash } from "node:crypto";
 import ceilings from "../../protocol/transport.json" with { type: "json" };
 import { AuthenticatedRecords } from "./records.mjs";
 export { schema, schemaDigest };
 
-const reject = code => { throw new ProtocolError(code); };
+const reject = (code) => {
+  throw new ProtocolError(code);
+};
 function identity(value) {
   if (value.commandSchemaDigest !== schemaDigest) reject("custody-lost");
   return value;
@@ -16,25 +23,47 @@ export function encode(value) {
   try {
     const snapshot = parseJson(encodeJson(value, schema.maxFrameBytes));
     return encodeWithSchema(identity(snapshot), schema);
-  } catch (error) { throw error instanceof ProtocolError ? error : new ProtocolError("invalid-frame"); }
+  } catch (error) {
+    throw error instanceof ProtocolError
+      ? error
+      : new ProtocolError("invalid-frame");
+  }
 }
-export function decode(bytes) { return identity(decodeWithSchema(bytes, schema)); }
+export function decode(bytes) {
+  return identity(decodeWithSchema(bytes, schema));
+}
 
 /** Command-specific authenticated records. Domain and schema identity are fixed;
  * caller-supplied metadata cannot turn a v1 observation channel into dispatch.
  */
 export class AuthenticatedChannel {
   #records;
-  constructor(options) { this.#records = new AuthenticatedRecords(options, { domain: schema.channelDomain, schemaDigest }); }
+  constructor(options) {
+    this.#records = new AuthenticatedRecords(options, {
+      domain: schema.channelDomain,
+      schemaDigest,
+    });
+  }
   seal(command) {
-    try { this.#records.ready(); return this.#records.seal(encode(command)); }
-    catch (error) { this.close(); throw error; }
+    try {
+      this.#records.ready();
+      return this.#records.seal(encode(command));
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
   open(bytes) {
-    try { return decode(this.#records.open(bytes)); }
-    catch (error) { this.close(); throw error; }
+    try {
+      return decode(this.#records.open(bytes));
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
-  close() { this.#records.close(); }
+  close() {
+    this.#records.close();
+  }
 }
 
 function record(value, type, kind) {
@@ -46,7 +75,11 @@ function record(value, type, kind) {
     }
     validateDefinition(snapshot, type, schema);
     return snapshot;
-  } catch (error) { throw error instanceof ProtocolError ? error : new ProtocolError("invalid-frame"); }
+  } catch (error) {
+    throw error instanceof ProtocolError
+      ? error
+      : new ProtocolError("invalid-frame");
+  }
 }
 
 /** One single-use transfer. The dispatcher must also bound total transfers and
@@ -61,10 +94,20 @@ export class TransferReceiver {
   #active = true;
   constructor(reference, { maximumBytes, timeoutMs }) {
     this.#reference = record(reference, "TransferReference");
-    const ceiling = this.#reference.purpose === "input" ? schema.maxInputBytes : schema.maxOutputBytes;
-    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > ceiling
-        || BigInt(this.#reference.bytes) > BigInt(maximumBytes)
-        || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > ceilings.maxTimeoutMs) reject("budget-exhausted");
+    const ceiling =
+      this.#reference.purpose === "input"
+        ? schema.maxInputBytes
+        : schema.maxOutputBytes;
+    if (
+      !Number.isSafeInteger(maximumBytes) ||
+      maximumBytes < 1 ||
+      maximumBytes > ceiling ||
+      BigInt(this.#reference.bytes) > BigInt(maximumBytes) ||
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs < 1 ||
+      timeoutMs > ceilings.maxTimeoutMs
+    )
+      reject("budget-exhausted");
     this.#deadline = performance.now() + timeoutMs;
   }
   #ready() {
@@ -75,22 +118,46 @@ export class TransferReceiver {
     try {
       this.#ready();
       const chunk = record(value, "TransferChunk", "transfer-chunk");
-      if (chunk.transferId !== this.#reference.transferId || chunk.offset !== String(this.#size)) reject("invalid-frame");
+      if (
+        chunk.transferId !== this.#reference.transferId ||
+        chunk.offset !== String(this.#size)
+      )
+        reject("invalid-frame");
       const bytes = Buffer.from(chunk.data, "hex");
-      if (this.#chunks.length >= schema.maxChunks || BigInt(this.#size + bytes.length) > BigInt(this.#reference.bytes)) reject("budget-exhausted");
+      if (
+        this.#chunks.length >= schema.maxChunks ||
+        BigInt(this.#size + bytes.length) > BigInt(this.#reference.bytes)
+      )
+        reject("budget-exhausted");
       this.#size += bytes.length;
       this.#hash.update(bytes);
       this.#chunks.push(bytes);
-    } catch (error) { this.close(); throw error instanceof ProtocolError ? error : new ProtocolError("invalid-frame"); }
+    } catch (error) {
+      this.close();
+      throw error instanceof ProtocolError
+        ? error
+        : new ProtocolError("invalid-frame");
+    }
   }
   finish(value) {
     try {
       this.#ready();
       const end = record(value, "TransferEnd", "transfer-end");
-      if (end.transferId !== this.#reference.transferId || String(this.#size) !== this.#reference.bytes) reject("invalid-frame");
-      if (this.#hash.digest("hex") !== this.#reference.digest) reject("custody-lost");
+      if (
+        end.transferId !== this.#reference.transferId ||
+        String(this.#size) !== this.#reference.bytes
+      )
+        reject("invalid-frame");
+      if (this.#hash.digest("hex") !== this.#reference.digest)
+        reject("custody-lost");
       return Buffer.concat(this.#chunks, this.#size);
-    } finally { this.close(); }
+    } finally {
+      this.close();
+    }
   }
-  close() { this.#active = false; this.#chunks = []; this.#hash = undefined; }
+  close() {
+    this.#active = false;
+    this.#chunks = [];
+    this.#hash = undefined;
+  }
 }

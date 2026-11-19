@@ -44,13 +44,20 @@ function lspOf(text, source) {
 // committed file, field by field per server.
 export function mergeLsp(file, shell) {
   const merged = { ...file };
-  for (const [name, entry] of Object.entries(shell)) merged[name] = { ...merged[name], ...entry };
+  for (const [name, entry] of Object.entries(shell))
+    merged[name] = { ...merged[name], ...entry };
   const servers = {};
   for (const [name, entry] of Object.entries(merged)) {
     if (!entry || entry.disabled) continue;
     const extensions = entry.extensions ?? BUILTIN_EXTENSIONS[name];
-    if (!Array.isArray(entry.command) || !entry.command.length || !extensions?.length) {
-      console.error(`harbor-llm-lsp: skipping ${name}: needs a command and extensions`);
+    if (
+      !Array.isArray(entry.command) ||
+      !entry.command.length ||
+      !extensions?.length
+    ) {
+      console.error(
+        `harbor-llm-lsp: skipping ${name}: needs a command and extensions`,
+      );
       continue;
     }
     servers[name] = {
@@ -77,11 +84,14 @@ export const AGENT_DEFAULTS = {
   },
 };
 
-const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const isObject = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 export function merge(base, over) {
-  if (!isObject(base) || !isObject(over)) return over === undefined ? base : over;
+  if (!isObject(base) || !isObject(over))
+    return over === undefined ? base : over;
   const merged = { ...base };
-  for (const [key, value] of Object.entries(over)) merged[key] = merge(base[key], value);
+  for (const [key, value] of Object.entries(over))
+    merged[key] = merge(base[key], value);
   return merged;
 }
 
@@ -100,7 +110,11 @@ export function injectInitialize(input, output, options) {
     buffer = Buffer.concat([buffer, chunk]);
     const end = buffer.indexOf("\r\n\r\n");
     if (end < 0) return;
-    const length = Number(/(?:^|\r\n)content-length:[ \t]*(\d+)[ \t]*(?:\r\n|$)/i.exec(buffer.subarray(0, end).toString())?.[1]);
+    const length = Number(
+      /(?:^|\r\n)content-length:[ \t]*(\d+)[ \t]*(?:\r\n|$)/i.exec(
+        buffer.subarray(0, end).toString(),
+      )?.[1],
+    );
     if (!Number.isInteger(length)) return flush();
     const start = end + 4;
     if (buffer.length < start + length) return;
@@ -111,9 +125,19 @@ export function injectInitialize(input, output, options) {
       return flush();
     }
     if (message?.method !== "initialize") return flush();
-    message.params = { ...message.params, initializationOptions: merge(options, message.params?.initializationOptions) };
+    message.params = {
+      ...message.params,
+      initializationOptions: merge(
+        options,
+        message.params?.initializationOptions,
+      ),
+    };
     const body = Buffer.from(JSON.stringify(message));
-    buffer = Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`), body, buffer.subarray(start + length)]);
+    buffer = Buffer.concat([
+      Buffer.from(`Content-Length: ${body.length}\r\n\r\n`),
+      body,
+      buffer.subarray(start + length),
+    ]);
     flush();
   };
   input.on("data", onData);
@@ -122,8 +146,11 @@ export function injectInitialize(input, output, options) {
 
 export function pick(servers, selectors) {
   for (const selector of selectors) {
-    if (!selector.startsWith(".") && servers[selector]) return [selector, servers[selector]];
-    const found = Object.entries(servers).find(([, server]) => server.extensions.includes(selector));
+    if (!selector.startsWith(".") && servers[selector])
+      return [selector, servers[selector]];
+    const found = Object.entries(servers).find(([, server]) =>
+      server.extensions.includes(selector),
+    );
     if (found) return found;
   }
   return undefined;
@@ -134,53 +161,90 @@ export async function resolveLsp(dir, environments) {
   // Like OpenCode outside a devshell: an unapproved or broken environment
   // still serves the committed file's servers.
   // No session: shell selection never applies, so the project default does.
-  const project = await environments.resolve({ sessionID: "harbor-llm-lsp", cwd }).catch((error) => {
-    console.error(`harbor-llm-lsp: project environment unavailable in ${cwd}: ${error.message}`);
-    return { flake: false, env: process.env };
-  });
+  const project = await environments
+    .resolve({ sessionID: "harbor-llm-lsp", cwd })
+    .catch((error) => {
+      console.error(
+        `harbor-llm-lsp: project environment unavailable in ${cwd}: ${error.message}`,
+      );
+      return { flake: false, env: process.env };
+    });
   // A covered root without flake.nix is only the trust boundary, not the project.
   const root = project.flake ? project.root : cwd;
-  const file = await readFile(path.join(root, ".opencode", "opencode.jsonc"), "utf8")
-    .catch((error) => (error.code === "ENOENT" ? undefined : Promise.reject(error)));
+  const file = await readFile(
+    path.join(root, ".opencode", "opencode.jsonc"),
+    "utf8",
+  ).catch((error) =>
+    error.code === "ENOENT" ? undefined : Promise.reject(error),
+  );
   return {
     root,
     env: project.env,
-    servers: mergeLsp(lspOf(file, ".opencode/opencode.jsonc"), lspOf(project.env.OPENCODE_CONFIG_CONTENT, "OPENCODE_CONFIG_CONTENT")),
+    servers: mergeLsp(
+      lspOf(file, ".opencode/opencode.jsonc"),
+      lspOf(project.env.OPENCODE_CONFIG_CONTENT, "OPENCODE_CONFIG_CONTENT"),
+    ),
   };
 }
 
 async function main([command, ...args]) {
-  const options = JSON.parse(await readFile(process.env.HARBOR_LLM_LSP_OPTIONS, "utf8"));
+  const options = JSON.parse(
+    await readFile(process.env.HARBOR_LLM_LSP_OPTIONS, "utf8"),
+  );
   // Without roots no `.envrc` may run: every lookup falls back to the committed file.
   const environments = options.roots?.length
-    ? createProjectEnvironments({ ...options, direnvApproval: "manual", baseline: process.env })
-    : { resolve: async () => { throw new Error("no lsp.roots configured"); } };
+    ? createProjectEnvironments({
+        ...options,
+        direnvApproval: "manual",
+        baseline: process.env,
+      })
+    : {
+        resolve: async () => {
+          throw new Error("no lsp.roots configured");
+        },
+      };
   if (command === "list") {
     // The fingerprint hashes the command and environment `serve` would run, so
     // callers that share a server notice a changed devshell (a toolchain bump
     // may change only PATH under a bare `rust-analyzer` command). direnv's own
     // DIRENV_* bookkeeping moves with file mtimes alone, so it stays out.
-    const { env, servers } = await resolveLsp(args[0] ?? process.cwd(), environments);
+    const { env, servers } = await resolveLsp(
+      args[0] ?? process.cwd(),
+      environments,
+    );
     for (const server of Object.values(servers)) {
-      const effective = Object.entries({ ...env, ...server.env }).filter(([name]) => !name.startsWith("DIRENV_"));
-      server.fingerprint = createHash("sha256").update(JSON.stringify([server.command, effective])).digest("hex");
+      const effective = Object.entries({ ...env, ...server.env }).filter(
+        ([name]) => !name.startsWith("DIRENV_"),
+      );
+      server.fingerprint = createHash("sha256")
+        .update(JSON.stringify([server.command, effective]))
+        .digest("hex");
     }
     process.stdout.write(`${JSON.stringify(servers)}\n`);
     return;
   }
-  if (command !== "serve" || !args[0]) throw new Error("usage: harbor-llm-lsp list [DIR] | serve SELECTOR[,...] [DIR]");
-  const { root, env, servers } = await resolveLsp(args[1] ?? process.cwd(), environments);
+  if (command !== "serve" || !args[0])
+    throw new Error(
+      "usage: harbor-llm-lsp list [DIR] | serve SELECTOR[,...] [DIR]",
+    );
+  const { root, env, servers } = await resolveLsp(
+    args[1] ?? process.cwd(),
+    environments,
+  );
   const [name, server] = pick(servers, args[0].split(",")) ?? [];
-  if (!server) throw new Error(`no Harbor LSP server for ${args[0]} in ${root}`);
-  const initialization = process.env.HARBOR_LLM_LSP_PROFILE === "editor"
-    ? server.initialization
-    : merge(AGENT_DEFAULTS[name], server.initialization);
+  if (!server)
+    throw new Error(`no Harbor LSP server for ${args[0]} in ${root}`);
+  const initialization =
+    process.env.HARBOR_LLM_LSP_PROFILE === "editor"
+      ? server.initialization
+      : merge(AGENT_DEFAULTS[name], server.initialization);
   // The wrapper is a user-systemd scope: without a user bus (a sandboxed
   // harness) it cannot start, and a server run directly beats none.
-  const socket = /unix:path=([^,;]+)/.exec(env.DBUS_SESSION_BUS_ADDRESS ?? "")?.[1]
-    ?? (env.XDG_RUNTIME_DIR && path.join(env.XDG_RUNTIME_DIR, "bus"));
+  const socket =
+    /unix:path=([^,;]+)/.exec(env.DBUS_SESSION_BUS_ADDRESS ?? "")?.[1] ??
+    (env.XDG_RUNTIME_DIR && path.join(env.XDG_RUNTIME_DIR, "bus"));
   const bus = Boolean(socket) && existsSync(socket);
-  const argv = [...(bus ? options.wrapper ?? [] : []), ...server.command];
+  const argv = [...(bus ? (options.wrapper ?? []) : []), ...server.command];
   // stdout carries the protocol: the server owns it from here.
   const child = spawn(argv[0], argv.slice(1), {
     cwd: root,
@@ -192,12 +256,15 @@ async function main([command, ...args]) {
     child.stdin.on("error", () => process.stdin.unpipe(child.stdin));
     injectInitialize(process.stdin, child.stdin, initialization);
   }
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+    process.on(signal, () => child.kill(signal));
   child.on("error", (error) => {
     console.error(`harbor-llm-lsp: cannot start ${name}: ${error.message}`);
     process.exit(127);
   });
-  child.on("exit", (code, signal) => process.exit(code ?? 128 + constants.signals[signal]));
+  child.on("exit", (code, signal) =>
+    process.exit(code ?? 128 + constants.signals[signal]),
+  );
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

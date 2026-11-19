@@ -13,6 +13,9 @@ export interface InitialDispatcherOptions {
 }
 export class InitialDispatcher {
   constructor(options: InitialDispatcherOptions);
-  handle(record: Uint8Array, sendTransfer?: (record: Uint8Array) => Promise<void>): Promise<Uint8Array | undefined>;
+  handle(
+    record: Uint8Array,
+    sendTransfer?: (record: Uint8Array) => Promise<void>,
+  ): Promise<Uint8Array | undefined>;
   close(): void;
 }

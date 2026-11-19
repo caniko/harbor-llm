@@ -12,7 +12,10 @@ export class AuthenticatedChannel {
   #records;
 
   constructor({ key, nonce, binding, role }) {
-    this.#records = new AuthenticatedRecords({ key, nonce, binding, role }, { domain: contract.domain, schemaDigest });
+    this.#records = new AuthenticatedRecords(
+      { key, nonce, binding, role },
+      { domain: contract.domain, schemaDigest },
+    );
   }
 
   /** Authenticate exactly one outgoing canonical message. No automatic retries. */
@@ -20,7 +23,10 @@ export class AuthenticatedChannel {
     try {
       this.#records.ready();
       return this.#records.seal(encode(message));
-    } catch (error) { this.close(); throw error; }
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
 
   /** Reject altered, reflected, replayed or out-of-order records before decoding. */

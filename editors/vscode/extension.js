@@ -15,25 +15,50 @@ exports.activate = async () => {
     const root = folder.uri.fsPath;
     let servers;
     try {
-      servers = JSON.parse(await new Promise((resolve, reject) =>
-        execFile(cli, ["list", root], { maxBuffer: 8 << 20 }, (error, stdout, stderr) =>
-          error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout))));
+      servers = JSON.parse(
+        await new Promise((resolve, reject) =>
+          execFile(
+            cli,
+            ["list", root],
+            { maxBuffer: 8 << 20 },
+            (error, stdout, stderr) =>
+              error
+                ? reject(new Error(stderr.trim() || error.message))
+                : resolve(stdout),
+          ),
+        ),
+      );
     } catch (error) {
       output.appendLine(`${root}: ${error.message}`);
       continue;
     }
     for (const [name, server] of Object.entries(servers)) {
-      const client = new LanguageClient(`harbor-${name}`, `Harbor ${name}`,
+      const client = new LanguageClient(
+        `harbor-${name}`,
+        `Harbor ${name}`,
         // The editor keeps the server's full features, not the agent profile.
-        { command: cli, args: ["serve", name, root], options: { cwd: root, env: { ...process.env, HARBOR_LLM_LSP_PROFILE: "editor" } } },
         {
-          documentSelector: server.extensions.map((extension) => ({ scheme: "file", pattern: `${root}/**/*${extension}` })),
+          command: cli,
+          args: ["serve", name, root],
+          options: {
+            cwd: root,
+            env: { ...process.env, HARBOR_LLM_LSP_PROFILE: "editor" },
+          },
+        },
+        {
+          documentSelector: server.extensions.map((extension) => ({
+            scheme: "file",
+            pattern: `${root}/**/*${extension}`,
+          })),
           workspaceFolder: folder,
           initializationOptions: server.initialization,
           outputChannel: output,
-        });
+        },
+      );
       clients.push(client);
-      client.start().catch((error) => output.appendLine(`${name}: ${error.message}`));
+      client
+        .start()
+        .catch((error) => output.appendLine(`${name}: ${error.message}`));
     }
   }
 };

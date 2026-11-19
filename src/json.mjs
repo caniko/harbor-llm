@@ -17,15 +17,29 @@ export function encodeJson(value, maximum) {
   }
   function visit(value, depth) {
     if (depth > limits.maxJsonDepth) throw new TypeError("invalid-options");
-    if (value === null || typeof value === "boolean") { append(String(value)); return; }
-    if (typeof value === "string") {
-      if (Buffer.byteLength(value) > maximum - size) throw new RangeError("input-limit");
-      append(JSON.stringify(value)); return;
+    if (value === null || typeof value === "boolean") {
+      append(String(value));
+      return;
     }
-    if (typeof value === "number" && Number.isFinite(value)) { append(JSON.stringify(value)); return; }
-    if (typeof value !== "object" || active.has(value) || types.isProxy(value)) throw new TypeError("invalid-options");
+    if (typeof value === "string") {
+      if (Buffer.byteLength(value) > maximum - size)
+        throw new RangeError("input-limit");
+      append(JSON.stringify(value));
+      return;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      append(JSON.stringify(value));
+      return;
+    }
+    if (typeof value !== "object" || active.has(value) || types.isProxy(value))
+      throw new TypeError("invalid-options");
     const array = Array.isArray(value);
-    if (![array ? Array.prototype : Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new TypeError("invalid-options");
+    if (
+      ![array ? Array.prototype : Object.prototype, null].includes(
+        Object.getPrototypeOf(value),
+      )
+    )
+      throw new TypeError("invalid-options");
     active.add(value);
     append(array ? "[" : "{");
     // Array iteration methods are caller-overridable. Read only own data slots.
@@ -34,11 +48,14 @@ export function encodeJson(value, maximum) {
     for (let index = 0; index < length; index++) {
       const key = array ? index : keys[index];
       const field = Object.getOwnPropertyDescriptor(value, key);
-      if (!field || !Object.hasOwn(field, "value")) throw new TypeError("invalid-options");
+      if (!field || !Object.hasOwn(field, "value"))
+        throw new TypeError("invalid-options");
       if (index) append(",");
       if (!array) {
-        if (Buffer.byteLength(key) > maximum - size) throw new RangeError("input-limit");
-        append(JSON.stringify(key)); append(":");
+        if (Buffer.byteLength(key) > maximum - size)
+          throw new RangeError("input-limit");
+        append(JSON.stringify(key));
+        append(":");
       }
       visit(field.value, depth + 1);
     }
@@ -51,13 +68,21 @@ export function encodeJson(value, maximum) {
 
 /** Bounded JSON with duplicate-key and nesting rejection, before JSON.parse. */
 export function parseJson(bytes) {
-  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  const text = new TextDecoder("utf-8", {
+    fatal: true,
+    ignoreBOM: true,
+  }).decode(bytes);
   let at = 0;
-  const space = () => { while (/[\t\r\n ]/.test(text[at] ?? "x")) at++; };
+  const space = () => {
+    while (/[\t\r\n ]/.test(text[at] ?? "x")) at++;
+  };
   function string() {
     const start = at++;
     while (at < text.length) {
-      if (text[at] === "\\") { at += 2; continue; }
+      if (text[at] === "\\") {
+        at += 2;
+        continue;
+      }
       if (text[at++] === '"') return JSON.parse(text.slice(start, at));
     }
     throw new Error("invalid-json");
@@ -65,13 +90,19 @@ export function parseJson(bytes) {
   function value(depth) {
     if (depth > limits.maxJsonDepth) throw new Error("invalid-json");
     space();
-    if (text[at] === '"') { string(); return; }
+    if (text[at] === '"') {
+      string();
+      return;
+    }
     if (text[at] === "{" || text[at] === "[") {
       const object = text[at++] === "{";
       const end = object ? "}" : "]";
       const keys = new Set();
       space();
-      if (text[at] === end) { at++; return; }
+      if (text[at] === end) {
+        at++;
+        return;
+      }
       for (;;) {
         if (object) {
           space();

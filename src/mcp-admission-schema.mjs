@@ -10,6 +10,7 @@ export const MCP_ADMISSION_LIMITS = Object.freeze({
   endpointCharacters: 2048,
   policyBytes: 64 * 1024,
 });
-export const MCP_ADMISSION_IDENTIFIER_PATTERN = policy.properties.servers.propertyNames.pattern;
+export const MCP_ADMISSION_IDENTIFIER_PATTERN =
+  policy.properties.servers.propertyNames.pattern;
 export const mcpAdmissionPolicySchema = policy;
 export const mcpRunBindingSchema = binding;

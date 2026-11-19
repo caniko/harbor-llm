@@ -20,7 +20,11 @@ export class FrameDecoder {
   push(bytes) {
     if (this.#closed) throw new ProtocolError("transport-failed");
     try {
-      if (!(bytes instanceof Uint8Array) || bytes.length > schema.maxFrameBytes + 4) throw new ProtocolError("invalid-frame");
+      if (
+        !(bytes instanceof Uint8Array) ||
+        bytes.length > schema.maxFrameBytes + 4
+      )
+        throw new ProtocolError("invalid-frame");
       const messages = [];
       let at = 0;
       while (at < bytes.length) {
@@ -31,10 +35,14 @@ export class FrameDecoder {
           at += count;
           if (this.#headerBytes !== 4) continue;
           const length = this.#header.readUInt32BE();
-          if (length === 0 || length > schema.maxFrameBytes) throw new ProtocolError("invalid-frame");
+          if (length === 0 || length > schema.maxFrameBytes)
+            throw new ProtocolError("invalid-frame");
           this.#body = Buffer.allocUnsafe(length);
         }
-        const count = Math.min(this.#body.length - this.#bodyBytes, bytes.length - at);
+        const count = Math.min(
+          this.#body.length - this.#bodyBytes,
+          bytes.length - at,
+        );
         this.#body.set(bytes.subarray(at, at + count), this.#bodyBytes);
         this.#bodyBytes += count;
         at += count;
@@ -48,7 +56,9 @@ export class FrameDecoder {
     } catch (error) {
       this.#closed = true;
       this.#body = undefined;
-      throw error instanceof ProtocolError ? error : new ProtocolError("invalid-frame");
+      throw error instanceof ProtocolError
+        ? error
+        : new ProtocolError("invalid-frame");
     }
   }
 

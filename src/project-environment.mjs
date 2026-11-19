@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, readlink, realpath, stat } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readlink,
+  realpath,
+  stat,
+} from "node:fs/promises";
 import { constants } from "node:fs";
 import { inflateSync } from "node:zlib";
 import path from "node:path";
@@ -14,9 +22,22 @@ const preparations = new Map();
 const knownWatches = new Map();
 
 function decodeWatches(value) {
-  if (typeof value !== "string") throw new Error("direnv export did not report watched inputs");
-  const watches = JSON.parse(inflateSync(Buffer.from(value, "base64url"), { maxOutputLength: 8 * 1024 * 1024 }));
-  if (!Array.isArray(watches) || watches.some(w => !path.isAbsolute(w.path ?? "") || !Number.isSafeInteger(w.modtime) || typeof w.exists !== "boolean")) {
+  if (typeof value !== "string")
+    throw new Error("direnv export did not report watched inputs");
+  const watches = JSON.parse(
+    inflateSync(Buffer.from(value, "base64url"), {
+      maxOutputLength: 8 * 1024 * 1024,
+    }),
+  );
+  if (
+    !Array.isArray(watches) ||
+    watches.some(
+      (w) =>
+        !path.isAbsolute(w.path ?? "") ||
+        !Number.isSafeInteger(w.modtime) ||
+        typeof w.exists !== "boolean",
+    )
+  ) {
     throw new Error("Invalid direnv watch generation");
   }
   return watches;
@@ -25,41 +46,79 @@ function decodeWatches(value) {
 async function watchState(file) {
   try {
     const [link, target] = await Promise.all([lstat(file), stat(file)]);
-    return [file, link.ino, link.size, link.mtimeMs, target.ino, target.size, target.mtimeMs];
-  } catch (error) { if (error.code === "ENOENT") return [file, null]; throw error; }
+    return [
+      file,
+      link.ino,
+      link.size,
+      link.mtimeMs,
+      target.ino,
+      target.size,
+      target.mtimeMs,
+    ];
+  } catch (error) {
+    if (error.code === "ENOENT") return [file, null];
+    throw error;
+  }
 }
 
 async function watchStates(files) {
   // Bounded batches avoid exhausting file descriptors on recursive watch_dir.
   const states = [];
   for (let start = 0; start < files.length; start += 64) {
-    states.push(...await Promise.all(files.slice(start, start + 64).map(watchInputState)));
+    states.push(
+      ...(await Promise.all(
+        files.slice(start, start + 64).map(watchInputState),
+      )),
+    );
   }
   return states;
 }
 
 async function watchInputState(file) {
   const state = await watchState(file);
-  if (state[1] === null || !/^(?:flake|nix)-profile(?:-.+)?\.rc$/.test(path.basename(file))) return state;
+  if (
+    state[1] === null ||
+    !/^(?:flake|nix)-profile(?:-.+)?\.rc$/.test(path.basename(file))
+  )
+    return state;
   const profile = file.slice(0, -3);
-  try { if (!(await lstat(profile)).isSymbolicLink()) return state; }
-  catch (error) { if (error.code === "ENOENT") return state; throw error; }
+  try {
+    if (!(await lstat(profile)).isSymbolicLink()) return state;
+  } catch (error) {
+    if (error.code === "ENOENT") return state;
+    throw error;
+  }
   // nix-direnv touches its watched profile body on every GC-root refresh.
   // Compare the body and retained target instead: manual cache edits still
   // invalidate waiters, including edits with unchanged size and timestamps.
-  if (state[5] > 8 * 1024 * 1024) throw new Error("nix-direnv cached environment exceeds the preparation limit");
+  if (state[5] > 8 * 1024 * 1024)
+    throw new Error(
+      "nix-direnv cached environment exceeds the preparation limit",
+    );
   const contents = await readFile(file);
-  if (contents.length > 8 * 1024 * 1024) throw new Error("nix-direnv cached environment exceeds the preparation limit");
+  if (contents.length > 8 * 1024 * 1024)
+    throw new Error(
+      "nix-direnv cached environment exceeds the preparation limit",
+    );
   state[3] = state[6] = null;
-  return [...state, await readlink(profile), createHash("sha256").update(contents).digest("hex")];
+  return [
+    ...state,
+    await readlink(profile),
+    createHash("sha256").update(contents).digest("hex"),
+  ];
 }
 
 async function validateWatches(watches) {
   for (const watch of watches) {
     const state = await watchState(watch.path);
-    if ((state[1] !== null) !== watch.exists
-      || (watch.exists && Math.floor(Math.max(state[3], state[6]) / 1000) !== watch.modtime)) {
-      throw new Error("Project watched inputs changed during preparation; retry");
+    if (
+      (state[1] !== null) !== watch.exists ||
+      (watch.exists &&
+        Math.floor(Math.max(state[3], state[6]) / 1000) !== watch.modtime)
+    ) {
+      throw new Error(
+        "Project watched inputs changed during preparation; retry",
+      );
     }
   }
 }
@@ -71,9 +130,11 @@ async function sharedPreparation(key, signal, prepare, onJoin) {
   if (!state) {
     const controller = new AbortController();
     state = { controller, waiters: 0, id: randomUUID() };
-    state.promise = Promise.resolve().then(() => prepare(controller.signal, state.id)).finally(() => {
-      if (preparations.get(key) === state) preparations.delete(key);
-    });
+    state.promise = Promise.resolve()
+      .then(() => prepare(controller.signal, state.id))
+      .finally(() => {
+        if (preparations.get(key) === state) preparations.delete(key);
+      });
     // Observe failures even when every waiter has been cancelled.
     state.promise.catch(() => {});
     preparations.set(key, state);
@@ -82,29 +143,42 @@ async function sharedPreparation(key, signal, prepare, onJoin) {
   state.waiters++;
   let abort;
   try {
-    return await Promise.race([state.promise, new Promise((_, reject) => {
-      abort = () => {
-        const error = new Error("Project environment preparation cancelled");
-        error.code = "CANCELLED";
-        error.preparation = { phase: "direnv export", reason: "cancelled", status: "failed" };
-        reject(error);
-      };
-      signal?.addEventListener("abort", abort, { once: true });
-      if (signal?.aborted) abort();
-    })]);
+    return await Promise.race([
+      state.promise,
+      new Promise((_, reject) => {
+        abort = () => {
+          const error = new Error("Project environment preparation cancelled");
+          error.code = "CANCELLED";
+          error.preparation = {
+            phase: "direnv export",
+            reason: "cancelled",
+            status: "failed",
+          };
+          reject(error);
+        };
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      }),
+    ]);
   } finally {
     signal?.removeEventListener("abort", abort);
     if (--state.waiters === 0) {
       if (preparations.get(key) === state) preparations.delete(key);
       state.controller.abort();
       // The last waiter learns when cleanup left the native outcome unknown.
-      await state.promise.catch(error => { if (error.code === "EXECUTION_OUTCOME_UNKNOWN") throw error; });
+      await state.promise.catch((error) => {
+        if (error.code === "EXECUTION_OUTCOME_UNKNOWN") throw error;
+      });
     }
   }
 }
 
 async function revision(file) {
-  return createHash("sha256").update(file).update("\n").update(await readFile(file)).digest("hex");
+  return createHash("sha256")
+    .update(file)
+    .update("\n")
+    .update(await readFile(file))
+    .digest("hex");
 }
 
 export class EnvironmentApprovalRequired extends Error {
@@ -117,8 +191,15 @@ export class EnvironmentApprovalRequired extends Error {
   }
 
   async isCurrent() {
-    try { return await realpath(this.envrc) === this.envrc && await revision(this.envrc) === this.revision; }
-    catch (error) { if (error.code === "ENOENT") return false; throw error; }
+    try {
+      return (
+        (await realpath(this.envrc)) === this.envrc &&
+        (await revision(this.envrc)) === this.revision
+      );
+    } catch (error) {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    }
   }
 }
 // AMC ready v2 / backpressure v1 control frames on stderr, bound to a fresh
@@ -131,18 +212,24 @@ function admissionFrames(stream, token, onEntry) {
   const frame = new RegExp(`\x1e${token}(:[^\x1e\x1f]{0,24})?\x1f`, "g");
   const partial = token.length + 26;
   let pending = "";
-  stream.on("data", chunk => {
+  stream.on("data", (chunk) => {
     pending += chunk.toString("latin1");
     let end = 0;
     for (const match of pending.matchAll(frame)) {
       const body = match[1] ?? "";
       end = match.index + match[0].length;
       if (!state.entered) {
-        if (!body) { state.entered = true; onEntry(); }
+        if (!body) {
+          state.entered = true;
+          onEntry();
+        }
         const retry = /^:backpressure:([1-9][0-9]{0,4})$/.exec(body)?.[1];
-        if (retry && Number(retry) <= 60_000) state.retryAfterMs = Number(retry);
+        if (retry && Number(retry) <= 60_000)
+          state.retryAfterMs = Number(retry);
       } else if (body && state.completions.length < 2) {
-        state.completions.push(/^:complete:(0|[1-9][0-9]{0,9})$/.exec(body)?.[1] ?? "malformed");
+        state.completions.push(
+          /^:complete:(0|[1-9][0-9]{0,9})$/.exec(body)?.[1] ?? "malformed",
+        );
       }
     }
     pending = pending.slice(Math.max(end, pending.length - partial));
@@ -152,156 +239,360 @@ function admissionFrames(stream, token, onEntry) {
 
 const inside = (root, target) => {
   const relative = path.relative(root, target);
-  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  return (
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
 };
 const OUTSIDE_ROOTS = "Working directory is outside configured project roots";
-const SELECTION_NEEDS_ENVRC = "Shell selection requires a project .envrc inside the configured roots";
-const SELECTION_NEEDS_LOCAL_ENVRC = "Shell selection requires a .envrc inside the selected flake root; inherited ancestor environments do not apply to explicit selection";
+const SELECTION_NEEDS_ENVRC =
+  "Shell selection requires a project .envrc inside the configured roots";
+const SELECTION_NEEDS_LOCAL_ENVRC =
+  "Shell selection requires a .envrc inside the selected flake root; inherited ancestor environments do not apply to explicit selection";
 
 // Selection metadata only. Every launch asks direnv to evaluate from the
 // same baseline; nix-direnv owns its build cache and watch invalidation.
-export function createProjectEnvironments({ roots, direnv, nix, system, baseline, bootstrapEnvironment, consistencyLocks = {}, preparationLockDirectory, direnvApproval = "auto", preparationTimeoutMs = 600_000, preparationAdmission, onProgress, setsid = "setsid", flock = "flock" }) {
-  if (!["auto", "manual"].includes(direnvApproval)) throw new Error("direnvApproval must be auto or manual");
-  if (!Number.isSafeInteger(preparationTimeoutMs) || preparationTimeoutMs <= 0 || preparationTimeoutMs > 3_600_000) {
-    throw new Error("preparationTimeoutMs must be a positive integer no greater than 3600000");
+export function createProjectEnvironments({
+  roots,
+  direnv,
+  nix,
+  system,
+  baseline,
+  bootstrapEnvironment,
+  consistencyLocks = {},
+  preparationLockDirectory,
+  direnvApproval = "auto",
+  preparationTimeoutMs = 600_000,
+  preparationAdmission,
+  onProgress,
+  setsid = "setsid",
+  flock = "flock",
+}) {
+  if (!["auto", "manual"].includes(direnvApproval))
+    throw new Error("direnvApproval must be auto or manual");
+  if (
+    !Number.isSafeInteger(preparationTimeoutMs) ||
+    preparationTimeoutMs <= 0 ||
+    preparationTimeoutMs > 3_600_000
+  ) {
+    throw new Error(
+      "preparationTimeoutMs must be a positive integer no greater than 3600000",
+    );
   }
-  if (!roots?.length || ![...roots, direnv, nix].every((p) => typeof p === "string" && path.isAbsolute(p))) {
-    throw new Error("Project environments require absolute roots and executable paths");
+  if (
+    !roots?.length ||
+    ![...roots, direnv, nix].every(
+      (p) => typeof p === "string" && path.isAbsolute(p),
+    )
+  ) {
+    throw new Error(
+      "Project environments require absolute roots and executable paths",
+    );
   }
-  if (preparationLockDirectory !== undefined && (typeof preparationLockDirectory !== "string" || !path.isAbsolute(preparationLockDirectory))) {
+  if (
+    preparationLockDirectory !== undefined &&
+    (typeof preparationLockDirectory !== "string" ||
+      !path.isAbsolute(preparationLockDirectory))
+  ) {
     throw new Error("preparationLockDirectory must be an absolute path");
   }
   if (preparationAdmission !== undefined) {
-    if (process.platform !== "linux" || !preparationAdmission || typeof preparationAdmission !== "object" || Array.isArray(preparationAdmission)
-      || typeof preparationAdmission.amc !== "string" || !path.isAbsolute(preparationAdmission.amc) || preparationAdmission.amc.includes("\0")
-      || typeof preparationAdmission.contract !== "string" || !/^[a-zA-Z0-9_.-]{1,64}$/.test(preparationAdmission.contract)
-      || !Number.isSafeInteger(preparationAdmission.memoryBytes) || preparationAdmission.memoryBytes <= 0) {
-      throw new Error("preparationAdmission requires an absolute AMC executable, contract and positive integer memoryBytes on Linux");
+    if (
+      process.platform !== "linux" ||
+      !preparationAdmission ||
+      typeof preparationAdmission !== "object" ||
+      Array.isArray(preparationAdmission) ||
+      typeof preparationAdmission.amc !== "string" ||
+      !path.isAbsolute(preparationAdmission.amc) ||
+      preparationAdmission.amc.includes("\0") ||
+      typeof preparationAdmission.contract !== "string" ||
+      !/^[a-zA-Z0-9_.-]{1,64}$/.test(preparationAdmission.contract) ||
+      !Number.isSafeInteger(preparationAdmission.memoryBytes) ||
+      preparationAdmission.memoryBytes <= 0
+    ) {
+      throw new Error(
+        "preparationAdmission requires an absolute AMC executable, contract and positive integer memoryBytes on Linux",
+      );
     }
     preparationAdmission = Object.freeze({ ...preparationAdmission });
   }
   const selections = new Map();
   const blocked = new Map();
-  if (bootstrapEnvironment !== undefined && (!bootstrapEnvironment || typeof bootstrapEnvironment !== "object"
-    || Array.isArray(bootstrapEnvironment) || typeof bootstrapEnvironment.PATH !== "string" || !bootstrapEnvironment.PATH
-    || typeof bootstrapEnvironment.HOME !== "string" || !bootstrapEnvironment.HOME
-    || !path.isAbsolute(bootstrapEnvironment.HOME) || Object.entries(bootstrapEnvironment).some(([name, value]) =>
-      typeof value !== "string" || name.startsWith("DIRENV_") || name.startsWith("PROJECT_DEV_SHELL") || name === "NIX_DIRENV_DID_FALLBACK"))) {
-    throw new Error("bootstrapEnvironment must be an independently configured string environment without project markers");
+  if (
+    bootstrapEnvironment !== undefined &&
+    (!bootstrapEnvironment ||
+      typeof bootstrapEnvironment !== "object" ||
+      Array.isArray(bootstrapEnvironment) ||
+      typeof bootstrapEnvironment.PATH !== "string" ||
+      !bootstrapEnvironment.PATH ||
+      typeof bootstrapEnvironment.HOME !== "string" ||
+      !bootstrapEnvironment.HOME ||
+      !path.isAbsolute(bootstrapEnvironment.HOME) ||
+      Object.entries(bootstrapEnvironment).some(
+        ([name, value]) =>
+          typeof value !== "string" ||
+          name.startsWith("DIRENV_") ||
+          name.startsWith("PROJECT_DEV_SHELL") ||
+          name === "NIX_DIRENV_DID_FALLBACK",
+      ))
+  ) {
+    throw new Error(
+      "bootstrapEnvironment must be an independently configured string environment without project markers",
+    );
   }
-  const bootstrap = bootstrapEnvironment === undefined ? null : Object.freeze({ ...bootstrapEnvironment });
-  if (!consistencyLocks || typeof consistencyLocks !== "object" || Array.isArray(consistencyLocks)
-    || Object.entries(consistencyLocks).some(([root, file]) => !path.isAbsolute(root) || typeof file !== "string" || !path.isAbsolute(file))) {
-    throw new Error("consistencyLocks must map absolute project roots to absolute lock anchors");
+  const bootstrap =
+    bootstrapEnvironment === undefined
+      ? null
+      : Object.freeze({ ...bootstrapEnvironment });
+  if (
+    !consistencyLocks ||
+    typeof consistencyLocks !== "object" ||
+    Array.isArray(consistencyLocks) ||
+    Object.entries(consistencyLocks).some(
+      ([root, file]) =>
+        !path.isAbsolute(root) ||
+        typeof file !== "string" ||
+        !path.isAbsolute(file),
+    )
+  ) {
+    throw new Error(
+      "consistencyLocks must map absolute project roots to absolute lock anchors",
+    );
   }
   async function consistencyLock(root) {
     const file = consistencyLocks[root];
     if (!file) return undefined;
-    const anchor = await open(file, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+    const anchor = await open(
+      file,
+      constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW,
+      0o600,
+    );
     try {
       const info = await anchor.stat();
-      if (!info.isFile() || info.uid !== process.getuid() || (info.mode & 0o077)) throw new Error("Invalid environment definition lock anchor");
-    } finally { await anchor.close(); }
+      if (!info.isFile() || info.uid !== process.getuid() || info.mode & 0o077)
+        throw new Error("Invalid environment definition lock anchor");
+    } finally {
+      await anchor.close();
+    }
     return file;
   }
   const base = { ...baseline };
   for (const name of Object.keys(base)) {
-    if (name.startsWith("DIRENV_") || name.startsWith("PROJECT_DEV_SHELL") || name === "NIX_DIRENV_DID_FALLBACK") delete base[name];
+    if (
+      name.startsWith("DIRENV_") ||
+      name.startsWith("PROJECT_DEV_SHELL") ||
+      name === "NIX_DIRENV_DID_FALLBACK"
+    )
+      delete base[name];
   }
   const key = (sessionID, root) => {
-    if (typeof sessionID !== "string" || !sessionID) throw new Error("Session identity is required");
+    if (typeof sessionID !== "string" || !sessionID)
+      throw new Error("Session identity is required");
     return JSON.stringify([sessionID, root]);
   };
   async function run(binary, args, cwd, env, signal, detail = {}) {
-    const timeoutMs = args[0] === "export" ? preparationTimeoutMs : args[0] === "eval" ? 120_000 : 10_000;
-    const progress = { preparationID: randomUUID(), phase: `${path.basename(binary)} ${args[0]}`, cwd, timeoutMs, ...detail };
+    const timeoutMs =
+      args[0] === "export"
+        ? preparationTimeoutMs
+        : args[0] === "eval"
+          ? 120_000
+          : 10_000;
+    const progress = {
+      preparationID: randomUUID(),
+      phase: `${path.basename(binary)} ${args[0]}`,
+      cwd,
+      timeoutMs,
+      ...detail,
+    };
     const started = performance.now();
     const deadline = new AbortController();
-    const admitted = preparationAdmission && ["export", "eval"].includes(args[0]);
+    const admitted =
+      preparationAdmission && ["export", "eval"].includes(args[0]);
     let timedOut = false;
     let timer;
-    const startDeadline = () => { timer = setTimeout(() => { timedOut = true; deadline.abort(); }, timeoutMs); };
+    const startDeadline = () => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        deadline.abort();
+      }, timeoutMs);
+    };
     if (!admitted) startDeadline();
-    const combined = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
+    const combined = AbortSignal.any([
+      deadline.signal,
+      ...(signal ? [signal] : []),
+    ]);
     let child, closed;
     const cancel = () => child?.kill("SIGTERM");
-    const unconfirmed = (reason, reconciling = false) => Object.assign(new Error(reason), { admission: reason, reconciling });
+    const unconfirmed = (reason, reconciling = false) =>
+      Object.assign(new Error(reason), { admission: reason, reconciling });
     try {
       combined.throwIfAborted();
       onProgress?.({ ...progress, status: admitted ? "waiting" : "preparing" });
       // execFile does not forward a `detached` option. Linux setsid gives
       // this preparation its own process group while retaining stdlib limits.
       const grouped = process.platform === "linux";
-      const invocation = detail.lock ? [flock, "--exclusive", detail.lock, binary, ...args] : [binary, ...args];
-      const guarded = detail.readLock ? [flock, "--shared", detail.readLock, ...invocation] : invocation;
+      const invocation = detail.lock
+        ? [flock, "--exclusive", detail.lock, binary, ...args]
+        : [binary, ...args];
+      const guarded = detail.readLock
+        ? [flock, "--shared", detail.readLock, ...invocation]
+        : invocation;
       if (admitted) combined.addEventListener("abort", cancel, { once: true });
       for (;;) {
         // A fresh unpredictable token per request: no frame of an earlier
         // attempt can confirm this one.
         const token = admitted ? randomUUID() : undefined;
-        const command = admitted ? [preparationAdmission.amc, "admission", "exec", "--contract", preparationAdmission.contract,
-          "--queue", "--max-ram-usage", `${preparationAdmission.memoryBytes}B`, "--runtime-max-sec", String(Math.ceil(timeoutMs / 1000)),
-          "--ready-token", token, "--", ...guarded] : guarded;
+        const command = admitted
+          ? [
+              preparationAdmission.amc,
+              "admission",
+              "exec",
+              "--contract",
+              preparationAdmission.contract,
+              "--queue",
+              "--max-ram-usage",
+              `${preparationAdmission.memoryBytes}B`,
+              "--runtime-max-sec",
+              String(Math.ceil(timeoutMs / 1000)),
+              "--ready-token",
+              token,
+              "--",
+              ...guarded,
+            ]
+          : guarded;
         // AMC owns native cancellation and descendant cleanup. Signal its client
         // without execFile's early AbortError or a process-group SIGKILL.
-        const execution = exec(grouped ? setsid : command[0], grouped ? ["--", ...command] : command.slice(1), { cwd, env, ...(admitted ? {} : { signal: combined }), maxBuffer: 8 * 1024 * 1024 });
+        const execution = exec(
+          grouped ? setsid : command[0],
+          grouped ? ["--", ...command] : command.slice(1),
+          {
+            cwd,
+            env,
+            ...(admitted ? {} : { signal: combined }),
+            maxBuffer: 8 * 1024 * 1024,
+          },
+        );
         child = execution.child;
         closed = new Promise((resolve) => child.once("close", resolve));
         if (!admitted) {
           const result = await execution;
-          onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
+          onProgress?.({
+            ...progress,
+            status: "ready",
+            elapsedMs: Math.round(performance.now() - started),
+          });
           return result.stdout;
         }
         if (combined.aborted) cancel();
         const frames = admissionFrames(child.stderr, token, () => {
           // The execution clock starts only at native entry.
           startDeadline();
-          onProgress?.({ ...progress, status: "preparing", waitMs: Math.round(performance.now() - started) });
+          onProgress?.({
+            ...progress,
+            status: "preparing",
+            waitMs: Math.round(performance.now() - started),
+          });
         });
-        const outcome = await execution.then(result => ({ result }), error => ({ error }));
+        const outcome = await execution.then(
+          (result) => ({ result }),
+          (error) => ({ error }),
+        );
         if (!frames.entered) {
           // Typed nonacceptance: nothing was accepted, so this intent owner may
           // submit a new request after the delay. Waiting is not execution.
           if (outcome.error?.code === 75 && frames.retryAfterMs !== undefined) {
-            onProgress?.({ ...progress, status: "waiting", retryAfterMs: frames.retryAfterMs });
+            onProgress?.({
+              ...progress,
+              status: "waiting",
+              retryAfterMs: frames.retryAfterMs,
+            });
             await delay(frames.retryAfterMs, undefined, { signal: combined });
             continue;
           }
           throw outcome.error ?? unconfirmed("native entry not confirmed");
         }
-        if (outcome.error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw outcome.error;
+        if (outcome.error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+          throw outcome.error;
         // A client exit is not workload evidence: settle only with exactly one
         // proof naming the same exit code. Otherwise AMC reconciles; no replay.
         const code = outcome.error ? outcome.error.code : 0;
-        if (frames.completions.length !== 1 || !Number.isSafeInteger(code) || frames.completions[0] !== String(code)) {
-          throw unconfirmed(`native outcome reconciling; client ${outcome.error?.signal ? `signal ${outcome.error.signal}` : `exit ${code}`}, completion proof ${frames.completions.join(",") || "missing"}`, true);
+        if (
+          frames.completions.length !== 1 ||
+          !Number.isSafeInteger(code) ||
+          frames.completions[0] !== String(code)
+        ) {
+          throw unconfirmed(
+            `native outcome reconciling; client ${outcome.error?.signal ? `signal ${outcome.error.signal}` : `exit ${code}`}, completion proof ${frames.completions.join(",") || "missing"}`,
+            true,
+          );
         }
         // Proven outcomes keep local cancellation and deadline classification.
         combined.throwIfAborted();
         if (outcome.error) throw outcome.error;
-        onProgress?.({ ...progress, status: "ready", elapsedMs: Math.round(performance.now() - started) });
+        onProgress?.({
+          ...progress,
+          status: "ready",
+          elapsedMs: Math.round(performance.now() - started),
+        });
         return outcome.result.stdout;
       }
     } catch (error) {
       // A timed-out direnv can leave its bash/Nix children alive. Reap this
       // preparation's private process group, never the caller's running jobs.
       if (child?.pid && !admitted) {
-        try { process.kill(process.platform === "linux" ? -child.pid : child.pid, "SIGKILL"); }
-        catch (killError) { if (killError.code !== "ESRCH") throw new Error("Cannot terminate failed environment preparation"); }
+        try {
+          process.kill(
+            process.platform === "linux" ? -child.pid : child.pid,
+            "SIGKILL",
+          );
+        } catch (killError) {
+          if (killError.code !== "ESRCH")
+            throw new Error("Cannot terminate failed environment preparation");
+        }
       }
       if (closed) await closed;
       // Hook output can contain credentials. Never forward stdout/stderr.
-      const lockDrift = !signal?.aborted && !timedOut
-        && /requires lock file changes but they're not allowed/.test(error.stderr ?? "");
+      const lockDrift =
+        !signal?.aborted &&
+        !timedOut &&
+        /requires lock file changes but they're not allowed/.test(
+          error.stderr ?? "",
+        );
       const unknown = error.reconciling === true;
-      const reason = unknown ? `${error.admission}${signal?.aborted ? " (cancelled)" : timedOut ? " (timeout)" : ""}`
-        : signal?.aborted ? "cancelled" : timedOut ? "timeout" : lockDrift ? "lock file changes required"
-        : error.admission ?? (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "output limit exceeded"
-          : error.signal ? `terminated by ${error.signal}` : `exit ${error.code ?? "unknown"}`);
-      const result = { ...progress, status: "failed", reason, elapsedMs: Math.round(performance.now() - started) };
+      const reason = unknown
+        ? `${error.admission}${signal?.aborted ? " (cancelled)" : timedOut ? " (timeout)" : ""}`
+        : signal?.aborted
+          ? "cancelled"
+          : timedOut
+            ? "timeout"
+            : lockDrift
+              ? "lock file changes required"
+              : (error.admission ??
+                (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+                  ? "output limit exceeded"
+                  : error.signal
+                    ? `terminated by ${error.signal}`
+                    : `exit ${error.code ?? "unknown"}`));
+      const result = {
+        ...progress,
+        status: "failed",
+        reason,
+        elapsedMs: Math.round(performance.now() - started),
+      };
       onProgress?.(result);
-      const failure = new Error(`Project environment preparation failed: ${result.phase}; cwd=${cwd}; envrc=${detail.envrc ?? "not yet resolved"}; approval=${detail.approval ?? "not yet checked"}; ${reason}; elapsed=${result.elapsedMs}ms; limit=${timeoutMs}ms; preparation=${progress.preparationID}${unknown ? "; inspect native execution and any side effects before retrying" : ""}`);
-      failure.code = unknown ? "EXECUTION_OUTCOME_UNKNOWN" : signal?.aborted ? "CANCELLED" : timedOut ? "TIMEOUT" : lockDrift ? "LOCK_DRIFT" : "PREPARATION_FAILED";
+      const failure = new Error(
+        `Project environment preparation failed: ${result.phase}; cwd=${cwd}; envrc=${detail.envrc ?? "not yet resolved"}; approval=${detail.approval ?? "not yet checked"}; ${reason}; elapsed=${result.elapsedMs}ms; limit=${timeoutMs}ms; preparation=${progress.preparationID}${unknown ? "; inspect native execution and any side effects before retrying" : ""}`,
+      );
+      failure.code = unknown
+        ? "EXECUTION_OUTCOME_UNKNOWN"
+        : signal?.aborted
+          ? "CANCELLED"
+          : timedOut
+            ? "TIMEOUT"
+            : lockDrift
+              ? "LOCK_DRIFT"
+              : "PREPARATION_FAILED";
       failure.preparation = result;
       throw failure;
     } finally {
@@ -315,32 +606,70 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
   async function projectAt(cwd) {
     const directory = await realpath(cwd);
     const allowed = await Promise.all(roots.map((root) => realpath(root)));
-    const boundary = allowed.filter((root) => inside(root, directory)).sort((a, b) => b.length - a.length)[0];
+    const boundary = allowed
+      .filter((root) => inside(root, directory))
+      .sort((a, b) => b.length - a.length)[0];
     // Coverage is not trust: an uncovered workdir resolves to the configured
     // baseline instead of failing the command or running a foreign `.envrc`.
-    if (!boundary) return { root: null, boundary: null, cwd: directory, flake: false, covered: false };
+    if (!boundary)
+      return {
+        root: null,
+        boundary: null,
+        cwd: directory,
+        flake: false,
+        covered: false,
+      };
     let current = directory;
     for (;;) {
       try {
-        if ((await stat(path.join(current, "flake.nix"))).isFile()) return { root: current, boundary, cwd: directory, flake: true, covered: true };
-      } catch (error) { if (error.code !== "ENOENT") throw error; }
+        if ((await stat(path.join(current, "flake.nix"))).isFile())
+          return {
+            root: current,
+            boundary,
+            cwd: directory,
+            flake: true,
+            covered: true,
+          };
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
       if (current === boundary) break;
       current = path.dirname(current);
     }
     // Non-flake projects may still use direnv, but have no named-shell menu.
-    return { root: boundary, boundary, cwd: directory, flake: false, covered: true };
+    return {
+      root: boundary,
+      boundary,
+      cwd: directory,
+      flake: false,
+      covered: true,
+    };
   }
   async function list(cwd, signal) {
     const project = await projectAt(cwd);
     if (!project.flake) return { ...project, shells: [] };
-    const names = JSON.parse(await run(nix, [
-      // Nix permits an in-memory relock with --no-write-lock-file, even when
-      // --no-update-lock-file is also present. Require the existing lock.
-      "eval", "--no-allow-import-from-derivation", "--no-update-lock-file", "--json",
-      `${project.root}#devShells.${system}`, "--apply",
-      "shells: builtins.filter (name: let shell = shells.${name}; in builtins.isAttrs shell && (shell.type or null) == \"derivation\") (builtins.attrNames shells)",
-    ], project.root, base, signal, { readLock: await consistencyLock(project.root) }));
-    if (!Array.isArray(names) || names.some((name) => typeof name !== "string")) throw new Error("Invalid flake shell catalog");
+    const names = JSON.parse(
+      await run(
+        nix,
+        [
+          // Nix permits an in-memory relock with --no-write-lock-file, even when
+          // --no-update-lock-file is also present. Require the existing lock.
+          "eval",
+          "--no-allow-import-from-derivation",
+          "--no-update-lock-file",
+          "--json",
+          `${project.root}#devShells.${system}`,
+          "--apply",
+          'shells: builtins.filter (name: let shell = shells.${name}; in builtins.isAttrs shell && (shell.type or null) == "derivation") (builtins.attrNames shells)',
+        ],
+        project.root,
+        base,
+        signal,
+        { readLock: await consistencyLock(project.root) },
+      ),
+    );
+    if (!Array.isArray(names) || names.some((name) => typeof name !== "string"))
+      throw new Error("Invalid flake shell catalog");
     return { ...project, shells: names };
   }
   // Returns the in-scope `.envrc` to execute, or null when none applies to
@@ -350,9 +679,16 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
   // (`forSelection`) additionally requires the `.envrc` to live inside the
   // selected flake root, so an ancestor can never acknowledge another flake's
   // shell name on its behalf.
-  async function requireApproval(project, env, signal, { forSelection = false } = {}) {
+  async function requireApproval(
+    project,
+    env,
+    signal,
+    { forSelection = false } = {},
+  ) {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const status = JSON.parse(await run(direnv, ["status", "--json"], project.cwd, env, signal));
+      const status = JSON.parse(
+        await run(direnv, ["status", "--json"], project.cwd, env, signal),
+      );
       const rc = status.state?.foundRC;
       if (!rc) return null;
       const file = await realpath(rc.path);
@@ -360,48 +696,94 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       // outside the configured boundary is discovered but never run here.
       if (!inside(project.boundary, file)) return null;
       if (forSelection && !inside(project.root, file)) {
-        throw new Error(`${SELECTION_NEEDS_LOCAL_ENVRC}: ${file} is outside ${project.root}`);
+        throw new Error(
+          `${SELECTION_NEEDS_LOCAL_ENVRC}: ${file} is outside ${project.root}`,
+        );
       }
       if (rc.allowed === 0) return file;
-      if (![1, 2].includes(rc.allowed)) throw new Error("Unknown direnv approval state");
-      const approval = new EnvironmentApprovalRequired(project.root, file, await revision(file));
+      if (![1, 2].includes(rc.allowed))
+        throw new Error("Unknown direnv approval state");
+      const approval = new EnvironmentApprovalRequired(
+        project.root,
+        file,
+        await revision(file),
+      );
       // direnv 2.37: Allowed=0, NotAllowed=1, explicitly Denied=2.
       if (direnvApproval === "manual" || rc.allowed === 2) throw approval;
-      if (!await approval.isCurrent()) continue;
+      if (!(await approval.isCurrent())) continue;
       signal?.throwIfAborted();
-      await run(direnv, ["allow", file], project.cwd, env, signal, { envrc: file, approval: "unapproved" });
+      await run(direnv, ["allow", file], project.cwd, env, signal, {
+        envrc: file,
+        approval: "unapproved",
+      });
       // Re-read native trust after allow; never export based on an old status.
     }
-    throw new Error("Project .envrc approval did not stabilize; retry preparation");
+    throw new Error(
+      "Project .envrc approval did not stabilize; retry preparation",
+    );
   }
   // Uncovered launches keep the configured baseline; each caller gets its own
   // frozen copy so no launch can mutate the shared configuration.
   const fallback = () => Object.freeze({ ...base });
   async function preparationLock(envrc) {
-    const directory = preparationLockDirectory ?? path.join(base.XDG_RUNTIME_DIR ?? path.join(base.HOME, ".cache"), "harbor-llm");
+    const directory =
+      preparationLockDirectory ??
+      path.join(
+        base.XDG_RUNTIME_DIR ?? path.join(base.HOME, ".cache"),
+        "harbor-llm",
+      );
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const metadata = await stat(directory);
-    if (await realpath(directory) !== directory || metadata.uid !== process.getuid() || (metadata.mode & 0o077)) {
-      throw new Error("Environment preparation lock directory is not private and operator-owned");
+    if (
+      (await realpath(directory)) !== directory ||
+      metadata.uid !== process.getuid() ||
+      metadata.mode & 0o077
+    ) {
+      throw new Error(
+        "Environment preparation lock directory is not private and operator-owned",
+      );
     }
     // Serialize all shells sharing nix-direnv's layout across processes. Never
     // unlink the anchor: flock state belongs to its inode, not its pathname.
-    const file = path.join(directory, `${createHash("sha256").update(path.dirname(envrc)).digest("hex")}.lock`);
-    const anchor = await open(file, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+    const file = path.join(
+      directory,
+      `${createHash("sha256").update(path.dirname(envrc)).digest("hex")}.lock`,
+    );
+    const anchor = await open(
+      file,
+      constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW,
+      0o600,
+    );
     try {
       const info = await anchor.stat();
-      if (!info.isFile() || info.uid !== process.getuid() || (info.mode & 0o077)) throw new Error("Invalid preparation lock anchor");
-    } finally { await anchor.close(); }
+      if (!info.isFile() || info.uid !== process.getuid() || info.mode & 0o077)
+        throw new Error("Invalid preparation lock anchor");
+    } finally {
+      await anchor.close();
+    }
     return file;
   }
   // Returns the launch environment plus the fallback reason, if any. Ordinary
   // launches never fail for coverage — only approval, evaluation, cancellation
   // and explicit selection errors still reject.
-  async function capture(project, shell, signal, context = {}, retry = false, allowCacheRefresh = true) {
+  async function capture(
+    project,
+    shell,
+    signal,
+    context = {},
+    retry = false,
+    allowCacheRefresh = true,
+  ) {
     if (shell !== undefined && !project.covered) throw new Error(OUTSIDE_ROOTS);
-    if (!project.covered) return { env: fallback(), reason: "outside configured project roots" };
-    const env = { ...base, ...(shell === undefined ? {} : { PROJECT_DEV_SHELL: shell }) };
-    const envrc = await requireApproval(project, env, signal, { forSelection: shell !== undefined });
+    if (!project.covered)
+      return { env: fallback(), reason: "outside configured project roots" };
+    const env = {
+      ...base,
+      ...(shell === undefined ? {} : { PROJECT_DEV_SHELL: shell }),
+    };
+    const envrc = await requireApproval(project, env, signal, {
+      forSelection: shell !== undefined,
+    });
     if (envrc === null) {
       if (shell !== undefined) throw new Error(SELECTION_NEEDS_ENVRC);
       return { env: fallback(), reason: "no in-scope project .envrc" };
@@ -409,41 +791,122 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
     let output;
     const readLock = await consistencyLock(path.dirname(envrc));
     const hash = await revision(envrc);
-    const definitions = [...new Set([envrc, ...[project.root, path.dirname(envrc)].flatMap(root => [path.join(root, "flake.nix"), path.join(root, "flake.lock")])])];
-    const watchFiles = [...new Set([...definitions, ...(knownWatches.get(envrc) ?? [])])].sort();
+    const definitions = [
+      ...new Set([
+        envrc,
+        ...[project.root, path.dirname(envrc)].flatMap((root) => [
+          path.join(root, "flake.nix"),
+          path.join(root, "flake.lock"),
+        ]),
+      ]),
+    ];
+    const watchFiles = [
+      ...new Set([...definitions, ...(knownWatches.get(envrc) ?? [])]),
+    ].sort();
     // Hash the declaration/lock pair as well as native watches: same-size edits
     // within one timestamp tick must release a blocked generation.
     const definitionState = async () => {
-      const contents = await Promise.all(definitions.map(async file => {
-        try { return await revision(file); } catch (error) { if (error.code === "ENOENT") return null; throw error; }
-      }));
+      const contents = await Promise.all(
+        definitions.map(async (file) => {
+          try {
+            return await revision(file);
+          } catch (error) {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          }
+        }),
+      );
       return [contents, await watchStates(watchFiles)];
     };
     const before = await definitionState();
     const encoded = JSON.stringify(before);
     const generation = createHash("sha256").update(encoded).digest("hex");
-    const identity = createHash("sha256").update(JSON.stringify([
-      project.cwd, project.boundary, envrc, hash, generation, shell, system, direnv, nix,
-      preparationTimeoutMs, preparationAdmission, readLock, setsid, flock, Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),
-    ])).digest("hex");
+    const identity = createHash("sha256")
+      .update(
+        JSON.stringify([
+          project.cwd,
+          project.boundary,
+          envrc,
+          hash,
+          generation,
+          shell,
+          system,
+          direnv,
+          nix,
+          preparationTimeoutMs,
+          preparationAdmission,
+          readLock,
+          setsid,
+          flock,
+          Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),
+        ]),
+      )
+      .digest("hex");
     if (retry) blocked.delete(identity);
     const previous = blocked.get(identity);
     if (previous) {
-      onProgress?.({ ...previous.preparation, ...context, phase: "environment request", status: "blocked", generation });
-      const error = new Error(`${previous.message}; repair with an explicit bootstrap invocation or retry after correcting inputs`);
+      onProgress?.({
+        ...previous.preparation,
+        ...context,
+        phase: "environment request",
+        status: "blocked",
+        generation,
+      });
+      const error = new Error(
+        `${previous.message}; repair with an explicit bootstrap invocation or retry after correcting inputs`,
+      );
       error.code = "LOCK_DRIFT";
-      error.preparation = { ...previous.preparation, ...context, status: "blocked" };
+      error.preparation = {
+        ...previous.preparation,
+        ...context,
+        status: "blocked",
+      };
       throw error;
     }
     try {
-      output = await sharedPreparation(identity, signal, async (sharedSignal, preparationID) => {
-        const lock = await preparationLock(envrc);
-        return run(direnv, ["export", "json"], project.cwd, env, sharedSignal, { ...context, preparationID, generation, envrc, approval: "approved", lock, readLock });
-      }, receipt => onProgress?.({ ...context, ...receipt, generation, phase: "environment request", status: "preparing", cwd: project.cwd }));
+      output = await sharedPreparation(
+        identity,
+        signal,
+        async (sharedSignal, preparationID) => {
+          const lock = await preparationLock(envrc);
+          return run(
+            direnv,
+            ["export", "json"],
+            project.cwd,
+            env,
+            sharedSignal,
+            {
+              ...context,
+              preparationID,
+              generation,
+              envrc,
+              approval: "approved",
+              lock,
+              readLock,
+            },
+          );
+        },
+        (receipt) =>
+          onProgress?.({
+            ...context,
+            ...receipt,
+            generation,
+            phase: "environment request",
+            status: "preparing",
+            cwd: project.cwd,
+          }),
+      );
       // Every waiter rechecks native approval and definition freshness. Source
       // watch invalidation is still handled inside each direnv export.
-      if (await requireApproval(project, env, signal, { forSelection: shell !== undefined }) !== envrc
-        || await revision(envrc) !== hash) throw new Error("Project environment changed during preparation; retry");
+      if (
+        (await requireApproval(project, env, signal, {
+          forSelection: shell !== undefined,
+        })) !== envrc ||
+        (await revision(envrc)) !== hash
+      )
+        throw new Error(
+          "Project environment changed during preparation; retry",
+        );
       const after = await definitionState();
       if (JSON.stringify(after) !== encoded) {
         // nix-direnv publishes renewed cache bodies atomically. Discard this
@@ -452,81 +915,160 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
         // fail closed; an endlessly replaced cache cannot cause a retry loop.
         // watchInputState's nine-field cache states include a retained profile
         // target and body hash; ordinary watched files cannot take this path.
-        const cacheReplacement = after[1].every((state, index) =>
-          JSON.stringify(state) === JSON.stringify(before[1][index])
-          || (state.length === 9 && state[1] !== before[1][index][1]));
-        if (allowCacheRefresh && cacheReplacement && JSON.stringify(after[0]) === JSON.stringify(before[0])) {
+        const cacheReplacement = after[1].every(
+          (state, index) =>
+            JSON.stringify(state) === JSON.stringify(before[1][index]) ||
+            (state.length === 9 && state[1] !== before[1][index][1]),
+        );
+        if (
+          allowCacheRefresh &&
+          cacheReplacement &&
+          JSON.stringify(after[0]) === JSON.stringify(before[0])
+        ) {
           return capture(project, shell, signal, context, retry, false);
         }
-        throw new Error("Project environment changed during preparation; retry");
+        throw new Error(
+          "Project environment changed during preparation; retry",
+        );
       }
-    }
-    catch (error) {
+    } catch (error) {
       // A definition can change between status and export. Turn a revoked
       // approval into the same barrier; preserve unrelated evaluation errors.
       // Recovery keeps the selection restriction so a vanishing local .envrc
       // can never prompt for or auto-allow an ancestor on selection's behalf.
-      if (["CANCELLED", "TIMEOUT", "EXECUTION_OUTCOME_UNKNOWN"].includes(error.code)) throw error;
-      if (error.code === "LOCK_DRIFT" && JSON.stringify(await definitionState()) === encoded) {
+      if (
+        ["CANCELLED", "TIMEOUT", "EXECUTION_OUTCOME_UNKNOWN"].includes(
+          error.code,
+        )
+      )
+        throw error;
+      if (
+        error.code === "LOCK_DRIFT" &&
+        JSON.stringify(await definitionState()) === encoded
+      ) {
         if (blocked.size >= 128) blocked.delete(blocked.keys().next().value);
-        blocked.set(identity, { message: error.message, preparation: error.preparation });
+        blocked.set(identity, {
+          message: error.message,
+          preparation: error.preparation,
+        });
       }
-      await requireApproval(project, env, signal, { forSelection: shell !== undefined });
+      await requireApproval(project, env, signal, {
+        forSelection: shell !== undefined,
+      });
       throw error;
     }
     const patch = JSON.parse(output);
-    if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("Invalid direnv environment patch");
+    if (!patch || typeof patch !== "object" || Array.isArray(patch))
+      throw new Error("Invalid direnv environment patch");
     const watches = decodeWatches(patch.DIRENV_WATCHES);
     // Scan before validating the watches: a change after the scan fails the
     // validation below, so the generation always describes this export's inputs.
     // Use the final watch set, including inputs discovered by this export, so
     // the first successful snapshot has the same identity as later reuses.
     const inputs = [];
-    for (const file of [...new Set([...definitions, ...watches.map(w => w.path)])].sort()) {
-      inputs.push([await watchInputState(file), definitions.includes(file)
-        ? await revision(file).catch(error => error.code === "ENOENT" ? null : Promise.reject(error)) : null]);
+    for (const file of [
+      ...new Set([...definitions, ...watches.map((w) => w.path)]),
+    ].sort()) {
+      inputs.push([
+        await watchInputState(file),
+        definitions.includes(file)
+          ? await revision(file).catch((error) =>
+              error.code === "ENOENT" ? null : Promise.reject(error),
+            )
+          : null,
+      ]);
     }
     // The scan must also match the pre-export definition state, or the
     // generation could name inputs newer than the exported environment.
-    if (JSON.stringify(await definitionState()) !== encoded) throw new Error("Project environment changed during preparation; retry");
+    if (JSON.stringify(await definitionState()) !== encoded)
+      throw new Error("Project environment changed during preparation; retry");
     await validateWatches(watches);
-    knownWatches.set(envrc, [...new Set(watches.map(w => w.path))].sort());
+    knownWatches.set(envrc, [...new Set(watches.map((w) => w.path))].sort());
     for (const [name, value] of Object.entries(patch)) {
       if (value === null) delete env[name];
       else if (typeof value === "string") env[name] = value;
       else throw new Error("Invalid direnv environment value");
     }
-    if (env.NIX_DIRENV_DID_FALLBACK) throw new Error("nix-direnv used a stale fallback; repair the project environment");
+    if (env.NIX_DIRENV_DID_FALLBACK)
+      throw new Error(
+        "nix-direnv used a stale fallback; repair the project environment",
+      );
     if (shell !== undefined && env.PROJECT_DEV_SHELL_ACTIVE !== shell) {
-      throw new Error("Project .envrc did not acknowledge the selected flake shell");
+      throw new Error(
+        "Project .envrc did not acknowledge the selected flake shell",
+      );
     }
-    return { env: Object.freeze(env), reason: null,
-      generation: createHash("sha256").update(JSON.stringify([hash, shell, inputs])).digest("hex") };
+    return {
+      env: Object.freeze(env),
+      reason: null,
+      generation: createHash("sha256")
+        .update(JSON.stringify([hash, shell, inputs]))
+        .digest("hex"),
+    };
   }
   return {
     list,
-    async resolve({ sessionID, cwd, signal, environment = "project", invocationID, toolCallID, retry = false, rootEnvironment = false }) {
+    async resolve({
+      sessionID,
+      cwd,
+      signal,
+      environment = "project",
+      invocationID,
+      toolCallID,
+      retry = false,
+      rootEnvironment = false,
+    }) {
       signal?.throwIfAborted();
-      if (!["project", "bootstrap"].includes(environment)) throw new Error("Unknown environment mode");
+      if (!["project", "bootstrap"].includes(environment))
+        throw new Error("Unknown environment mode");
       const discovered = await projectAt(cwd);
       // Long-lived workspace processes use a stable root environment across file queries.
-      const project = rootEnvironment && discovered.root ? { ...discovered, cwd: discovered.root } : discovered;
+      const project =
+        rootEnvironment && discovered.root
+          ? { ...discovered, cwd: discovered.root }
+          : discovered;
       const context = { sessionID, invocationID, toolCallID, environment };
       if (environment === "bootstrap") {
-        if (!bootstrap) throw new Error("Explicit repair execution requires bootstrapEnvironment configuration");
+        if (!bootstrap)
+          throw new Error(
+            "Explicit repair execution requires bootstrapEnvironment configuration",
+          );
         signal?.throwIfAborted();
-        onProgress?.({ ...context, phase: "environment request", status: "bootstrap", cwd: project.cwd });
-        return { ...project, shell: null, env: Object.freeze({ ...bootstrap }), fallback: "explicit bootstrap environment" };
+        onProgress?.({
+          ...context,
+          phase: "environment request",
+          status: "bootstrap",
+          cwd: project.cwd,
+        });
+        return {
+          ...project,
+          shell: null,
+          env: Object.freeze({ ...bootstrap }),
+          fallback: "explicit bootstrap environment",
+        };
       }
-      const shell = project.covered ? selections.get(key(sessionID, project.root)) : undefined;
-      if (shell !== undefined && !(await list(cwd, signal)).shells.includes(shell)) throw new Error("Selected shell is no longer in the flake");
+      const shell = project.covered
+        ? selections.get(key(sessionID, project.root))
+        : undefined;
+      if (
+        shell !== undefined &&
+        !(await list(cwd, signal)).shells.includes(shell)
+      )
+        throw new Error("Selected shell is no longer in the flake");
       const captured = await capture(project, shell, signal, context, retry);
-      return { ...project, shell: shell ?? null, env: captured.env, fallback: captured.reason, generation: captured.generation };
+      return {
+        ...project,
+        shell: shell ?? null,
+        env: captured.env,
+        fallback: captured.reason,
+        generation: captured.generation,
+      };
     },
     async select({ sessionID, cwd, shell, signal }) {
       const project = await list(cwd, signal);
       if (!project.covered) throw new Error(OUTSIDE_ROOTS);
-      if (!project.shells.includes(shell)) throw new Error("Shell is not declared by the project flake");
+      if (!project.shells.includes(shell))
+        throw new Error("Shell is not declared by the project flake");
       const id = key(sessionID, project.root);
       await capture(project, shell, signal);
       signal?.throwIfAborted();
@@ -546,7 +1088,8 @@ export function createProjectEnvironments({ roots, direnv, nix, system, baseline
       return { root: project.root, shell: null };
     },
     release(sessionID) {
-      for (const id of selections.keys()) if (JSON.parse(id)[0] === sessionID) selections.delete(id);
+      for (const id of selections.keys())
+        if (JSON.parse(id)[0] === sessionID) selections.delete(id);
     },
   };
 }
@@ -559,51 +1102,83 @@ export function createEnvironmentBarrier({ environments, requestApproval }) {
 
   async function prepare(operation, input) {
     const { sessionID } = input;
-    if (!sessionID || disposed || released.has(sessionID)) throw new Error("Project environment session is unavailable");
+    if (!sessionID || disposed || released.has(sessionID))
+      throw new Error("Project environment session is unavailable");
     let state = sessions.get(sessionID);
     if (!state) {
-      state = { controller: new AbortController(), denied: new Set(), tail: Promise.resolve() };
+      state = {
+        controller: new AbortController(),
+        denied: new Set(),
+        tail: Promise.resolve(),
+      };
       sessions.set(sessionID, state);
     }
-    const signal = AbortSignal.any([state.controller.signal, ...(input.signal ? [input.signal] : [])]);
+    const signal = AbortSignal.any([
+      state.controller.signal,
+      ...(input.signal ? [input.signal] : []),
+    ]);
     signal.throwIfAborted();
     // Repair must remain available while a project preparation is waiting.
-    if (operation === "resolve" && input.environment === "bootstrap") return environments.resolve({ ...input, signal });
+    if (operation === "resolve" && input.environment === "bootstrap")
+      return environments.resolve({ ...input, signal });
     let active = false;
-    const work = state.tail.catch(() => {}).then(async () => {
-      active = true;
-      for (;;) {
-        signal.throwIfAborted();
-        try {
-          const result = await environments[operation]({ ...input, signal });
+    const work = state.tail
+      .catch(() => {})
+      .then(async () => {
+        active = true;
+        for (;;) {
           signal.throwIfAborted();
-          return result;
-        } catch (error) {
-          if (!(error instanceof EnvironmentApprovalRequired) || !requestApproval) throw error;
-          const id = JSON.stringify([error.envrc, error.revision]);
-          if (state.denied.has(id)) throw new Error(`Project environment approval was declined: ${error.envrc}`);
-          if (!await error.isCurrent()) continue;
-          const answer = await requestApproval({ sessionID, approval: error, signal });
-          signal.throwIfAborted();
-          if (answer === "deny") {
-            state.denied.add(id);
-            throw new Error(`Project environment approval was declined: ${error.envrc}`);
+          try {
+            const result = await environments[operation]({ ...input, signal });
+            signal.throwIfAborted();
+            return result;
+          } catch (error) {
+            if (
+              !(error instanceof EnvironmentApprovalRequired) ||
+              !requestApproval
+            )
+              throw error;
+            const id = JSON.stringify([error.envrc, error.revision]);
+            if (state.denied.has(id))
+              throw new Error(
+                `Project environment approval was declined: ${error.envrc}`,
+              );
+            if (!(await error.isCurrent())) continue;
+            const answer = await requestApproval({
+              sessionID,
+              approval: error,
+              signal,
+            });
+            signal.throwIfAborted();
+            if (answer === "deny") {
+              state.denied.add(id);
+              throw new Error(
+                `Project environment approval was declined: ${error.envrc}`,
+              );
+            }
+            if (answer !== "retry")
+              throw new Error("Invalid project environment approval response");
           }
-          if (answer !== "retry") throw new Error("Invalid project environment approval response");
         }
-      }
-    });
+      });
     state.tail = work;
     // Queued cancellation is prompt. Once preparation starts, its producer
     // owns cancellation completion, including subprocess cleanup.
     let abort;
     try {
-      return await Promise.race([work, new Promise((_, reject) => {
-        abort = () => { if (!active) reject(signal.reason); };
-        signal.addEventListener("abort", abort, { once: true });
-        if (signal.aborted) abort();
-      })]);
-    } finally { signal.removeEventListener("abort", abort); }
+      return await Promise.race([
+        work,
+        new Promise((_, reject) => {
+          abort = () => {
+            if (!active) reject(signal.reason);
+          };
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        }),
+      ]);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
   }
 
   const reset = (sessionID) => {
@@ -618,7 +1193,10 @@ export function createEnvironmentBarrier({ environments, requestApproval }) {
     select: (input) => prepare("select", input),
     clear: (input) => prepare("clear", input),
     reset,
-    release: (sessionID) => { released.add(sessionID); return reset(sessionID); },
+    release: (sessionID) => {
+      released.add(sessionID);
+      return reset(sessionID);
+    },
     async dispose() {
       disposed = true;
       await Promise.all([...sessions.keys()].map(reset));

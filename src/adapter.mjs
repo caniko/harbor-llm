@@ -16,37 +16,63 @@ export function createAdapter(registry, prepareEnvironment) {
   return {
     async execute(args, context) {
       if (!context.sessionID) throw new Error("Session identity is required");
-      if (Object.keys(args).some((key) => !["action", "project", "shell"].includes(key))) {
-        throw new Error("Unexpected dev-shell arguments; commands and overrides are not accepted");
+      if (
+        Object.keys(args).some(
+          (key) => !["action", "project", "shell"].includes(key),
+        )
+      ) {
+        throw new Error(
+          "Unexpected dev-shell arguments; commands and overrides are not accepted",
+        );
       }
       if (args.action === "list") return JSON.stringify(environments.list());
       if (!args.project) throw new Error("A registered project is required");
-      if (args.action === "status") return JSON.stringify({
-        compatible: compatible.has(context.sessionID), selected: environments.status(context.sessionID, args.project),
-      });
+      if (args.action === "status")
+        return JSON.stringify({
+          compatible: compatible.has(context.sessionID),
+          selected: environments.status(context.sessionID, args.project),
+        });
       if (args.action === "clear") {
         environments.clear(context.sessionID, args.project);
         return "Selection cleared; subsequent commands use the harness baseline/direnv policy.";
       }
-      if (args.action !== "select" || !args.shell) throw new Error("Expected select with a named shell");
-      if (!compatible.has(context.sessionID)) throw new Error("Environment replacement is not verified. Run an ordinary Bash tool call on the patched OpenCode runtime first.");
-      const project = environments.list().find((entry) => entry.name === args.project);
+      if (args.action !== "select" || !args.shell)
+        throw new Error("Expected select with a named shell");
+      if (!compatible.has(context.sessionID))
+        throw new Error(
+          "Environment replacement is not verified. Run an ordinary Bash tool call on the patched OpenCode runtime first.",
+        );
+      const project = environments
+        .list()
+        .find((entry) => entry.name === args.project);
       if (!project) throw new Error("Project is not registered");
       const root = await realpath(project.root);
       const worktree = await realpath(context.worktree || context.directory);
       if (root !== worktree && !root.startsWith(worktree + path.sep)) {
         await context.ask({
-          permission: "external_directory", patterns: [root + "/*"], always: [root + "/*"],
+          permission: "external_directory",
+          patterns: [root + "/*"],
+          always: [root + "/*"],
           metadata: { directory: root },
         });
       }
       const selected = await environments.select({
-        session: context.sessionID, project: args.project, shell: args.shell,
-        cwd: root, signal: context.abort,
-        authorize: (identity) => context.ask({
-          permission: "harbor_dev_shell_prepare", patterns: [identity], always: [identity],
-          metadata: { identity, operation: "Realize dev shell and execute its trusted shellHook; no agent command" },
-        }),
+        session: context.sessionID,
+        project: args.project,
+        shell: args.shell,
+        cwd: root,
+        signal: context.abort,
+        authorize: (identity) =>
+          context.ask({
+            permission: "harbor_dev_shell_prepare",
+            patterns: [identity],
+            always: [identity],
+            metadata: {
+              identity,
+              operation:
+                "Realize dev shell and execute its trusted shellHook; no agent command",
+            },
+          }),
       });
       return JSON.stringify(selected);
     },
@@ -54,7 +80,9 @@ export function createAdapter(registry, prepareEnvironment) {
       // PTYs and other sessionless entry points never inherit a selection.
       if (!input.sessionID) return;
       if (input.harborLlm !== 1) {
-        throw new Error("OpenCode lacks the harbor-llm replacement contract; refusing environment injection");
+        throw new Error(
+          "OpenCode lacks the harbor-llm replacement contract; refusing environment injection",
+        );
       }
       compatible.add(input.sessionID);
       const env = await resolve(input);
