@@ -9,7 +9,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.harbor-meta.follows = "harbor-meta";
     };
-    treefmt-nix.follows = "harbor-rs/treefmt-nix";
+    treefmt-nix.follows = "harbor-meta/treefmt-nix";
   };
 
   outputs = {

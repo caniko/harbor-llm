@@ -419,7 +419,7 @@
           "nixpkgs"
         ],
         "treefmt-nix": [
-          "harbor-rs",
+          "harbor-meta",
           "treefmt-nix"
         ]
       }
