@@ -12,6 +12,9 @@
   settings.excludes = [
     ".github/workflows/*.yaml"
     "protocol/*.json"
+    # Generated; codegen checks these bytes.
+    "rust/command_types.rs"
+    "rust/types.rs"
     "test/*.json"
     "src/execution/*.d.ts"
     "node_modules/**"
