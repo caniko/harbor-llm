@@ -27,6 +27,8 @@
     "src/execution/*.d.ts"
     "src/execution/command-schema.mjs"
     "src/execution/schema.mjs"
+    # Negative TS fixtures depend on @ts-expect-error applying to the next line.
+    "test/execution.types.mts"
     "package-lock.json"
     "node_modules/**"
     ".opencode/**"
