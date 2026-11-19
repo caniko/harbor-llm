@@ -1,4 +1,0 @@
-[formatter.nix]
-command = "alejandra"
-includes = ["*.nix"]
-excludes = ["node_modules/**", ".opencode/**", ".direnv/**", ".nix-results/**"]

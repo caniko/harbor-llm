@@ -9,6 +9,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.harbor-meta.follows = "harbor-meta";
     };
+    treefmt-nix.follows = "harbor-rs/treefmt-nix";
   };
 
   outputs = {
@@ -16,9 +17,14 @@
     nixpkgs,
     harbor-meta,
     harbor-rs,
+    treefmt-nix,
     ...
   }: let
     forSystems = nixpkgs.lib.genAttrs ["x86_64-linux" "aarch64-linux"];
+    format = forSystems (system:
+      treefmt-nix.lib.evalModule nixpkgs.legacyPackages.${system} (import ./nix/treefmt.nix {
+        inherit harbor-meta harbor-rs;
+      }));
   in {
     lib.timezone = harbor-meta.lib.timezone;
     lib.environmentContractVersion = 1;
@@ -105,7 +111,7 @@
     in {
       default = harbor-meta.lib.devShell.mkShell {
         inherit pkgs;
-        packages = [pkgs.nodejs pkgs.alejandra pkgs.treefmt pkgs.direnv pkgs.nix pkgs.util-linux];
+        packages = [pkgs.nodejs format.${system}.config.build.wrapper pkgs.direnv pkgs.nix pkgs.util-linux];
       };
     });
     checks = forSystems (system: let
@@ -148,13 +154,7 @@
         module = self.nixosModules.custodian;
       };
       custodian-package = self.packages.${system}.custodian;
-      formatting = pkgs.runCommand "harbor-llm-formatting" {nativeBuildInputs = [pkgs.treefmt pkgs.alejandra];} ''
-        cp -r ${self} source
-        chmod -R u+w source
-        cd source
-        treefmt --ci
-        touch $out
-      '';
+      formatting = format.${system}.config.build.check self;
       shell = harbor-meta.lib.devShellTests.mkCheck {
         inherit pkgs;
         name = "harbor-llm-dev-shell";
@@ -162,6 +162,6 @@
         commands = ["node" "npm"];
       };
     });
-    formatter = forSystems (system: nixpkgs.legacyPackages.${system}.treefmt);
+    formatter = forSystems (system: format.${system}.config.build.wrapper);
   };
 }
