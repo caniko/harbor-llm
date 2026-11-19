@@ -2,8 +2,16 @@
   description = "Generic LLM harness integrations and project-scoped environments";
 
   inputs = {
+    harbor-js = {
+      url = "github:caniko/harbor-js/fe5aac155ae8293ee6923452169ffb9bcdc3e77a";
+      flake = false;
+    };
     harbor-meta.url = "github:caniko/harbor-meta";
     nixpkgs.follows = "harbor-meta/nixpkgs";
+    harbor-py = {
+      url = "github:caniko/harbor-py/4d9f2bad84bd375b1d02ec83ef3270e172f2ff5b";
+      flake = false;
+    };
     harbor-rs = {
       url = "github:caniko/harbor-rs";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -19,11 +27,13 @@
     harbor-rs,
     treefmt-nix,
     ...
-  }: let
+  } @ inputs: let
     forSystems = nixpkgs.lib.genAttrs ["x86_64-linux" "aarch64-linux"];
     format = forSystems (system:
       treefmt-nix.lib.evalModule nixpkgs.legacyPackages.${system} (import ./nix/treefmt.nix {
         inherit harbor-meta harbor-rs;
+        harbor-js.treefmtModules.javascript = "${inputs.harbor-js}/nix/treefmt/javascript.nix";
+        harbor-py.treefmtModules.python = "${inputs.harbor-py}/nix/treefmt/python.nix";
       }));
   in {
     lib.timezone = harbor-meta.lib.timezone;
