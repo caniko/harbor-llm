@@ -1,6 +1,6 @@
 //! Separately versioned command data. Decoding grants no execution authority.
 use crate::{
-    Binding, Counter, Digest, ErrorCode, Failure, Id, OutputReceipt, ProtocolError, rejected,
+    rejected, Binding, Counter, Digest, ErrorCode, Failure, Id, OutputReceipt, ProtocolError,
 };
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};

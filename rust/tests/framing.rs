@@ -1,7 +1,7 @@
 //! Bounded framing and truncated-channel failures.
 use harbor_llm_protocol::{
-    Body, ErrorCode, Failure, Message,
     framing::{read_frame, write_frame},
+    Body, ErrorCode, Failure, Message,
 };
 use std::io::Cursor;
 

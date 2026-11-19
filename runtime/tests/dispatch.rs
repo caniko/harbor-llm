@@ -1,10 +1,10 @@
 //! The command callback cannot run before the durable one-shot reservation.
 use harbor_llm_protocol::{
-    Binding, ErrorCode, ProtocolError,
     commands::{
         self, Command, CommandBody, Effect, EffectReceipt, EffectState, TransferPurpose,
         TransferReference,
     },
+    Binding, ErrorCode, ProtocolError,
 };
 use harbor_llm_runtime::{Controller, Operation, State};
 use std::{fs, os::unix::fs::PermissionsExt};
@@ -201,11 +201,9 @@ fn changed_targets_inputs_and_fresh_reopen_cannot_release_commands() {
                 _ => (),
             }
         }
-        assert!(
-            controller
-                .dispatch_initial(&changed, |_| panic!("must not release changed input"))
-                .is_err()
-        );
+        assert!(controller
+            .dispatch_initial(&changed, |_| panic!("must not release changed input"))
+            .is_err());
         assert_eq!(controller.state(Operation::Execute), None);
     }
     let registration = controller.registration().clone();

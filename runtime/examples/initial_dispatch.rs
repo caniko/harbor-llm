@@ -1,15 +1,15 @@
 //! Explicit local conformance: Rust journal -> private authenticated IPC -> actual
 //! JavaScript dispatcher/generated client -> synthetic HTTP observer. No provider.
 use harbor_llm_protocol::{
-    Binding, ErrorCode, ProtocolError,
     channel::Role,
     commands::{
         self, AuthenticatedChannel, Command, CommandBody, TransferPurpose, TransferReference,
     },
+    Binding, ErrorCode, ProtocolError,
 };
 use harbor_llm_runtime::{
-    Controller, Operation, State,
     ipc::{Exchange, Limits},
+    Controller, Operation, State,
 };
 use sha2::{Digest as _, Sha256};
 use std::{

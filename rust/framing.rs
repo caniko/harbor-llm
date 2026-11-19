@@ -1,6 +1,6 @@
 //! Length-prefixed canonical protocol frames. Callers own authenticated channels,
 //! I/O deadlines and total budgets. Discard a stream after any framing failure.
-use crate::{ErrorCode, Message, ProtocolError, decode, encode, rejected, schema};
+use crate::{decode, encode, rejected, schema, ErrorCode, Message, ProtocolError};
 use std::io::{Read, Write};
 
 /// Read one bounded frame, rejecting the declared size before allocation.

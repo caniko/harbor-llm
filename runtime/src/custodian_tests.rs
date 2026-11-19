@@ -118,14 +118,12 @@ fn preparation_consumes_admission_before_holding_an_image_and_reopen_is_observat
         }
         _ => panic!("expected held preparation"),
     };
-    assert!(
-        !fixture
-            .config
-            .admission_directory
-            .join("pending")
-            .join(format!("{}.json", fixture.id))
-            .exists()
-    );
+    assert!(!fixture
+        .config
+        .admission_directory
+        .join("pending")
+        .join(format!("{}.json", fixture.id))
+        .exists());
     assert!(
         Controller::reopen(
             &fixture.config.state_directory,
@@ -308,14 +306,12 @@ fn unsupported_malformed_and_partial_control_requests_never_consume_admission() 
     assert!(wire.receive(MAX_FRAME).unwrap().is_none());
     drop(wire);
     assert!(worker.join().unwrap().is_err());
-    assert!(
-        fixture
-            .config
-            .admission_directory
-            .join("pending")
-            .join(format!("{}.json", fixture.id))
-            .exists()
-    );
+    assert!(fixture
+        .config
+        .admission_directory
+        .join("pending")
+        .join(format!("{}.json", fixture.id))
+        .exists());
     assert_eq!(
         fs::read_dir(&fixture.config.state_directory)
             .unwrap()
@@ -484,14 +480,12 @@ fn linked_admissions_and_oversized_deep_or_partial_frames_cannot_prepare() {
     socket.shutdown(std::net::Shutdown::Write).unwrap();
     assert_eq!(socket.read(&mut [0; 4]).unwrap(), 0);
     assert!(worker.join().unwrap().is_err());
-    assert!(
-        fixture
-            .config
-            .admission_directory
-            .join("pending")
-            .join(format!("{}.json", fixture.id))
-            .exists()
-    );
+    assert!(fixture
+        .config
+        .admission_directory
+        .join("pending")
+        .join(format!("{}.json", fixture.id))
+        .exists());
     assert_eq!(
         fs::read_dir(&fixture.config.state_directory)
             .unwrap()
@@ -541,14 +535,12 @@ fn abrupt_custodian_exit_preserves_consumption_and_does_not_restore_freshness() 
     child.0.kill().unwrap();
     child.0.wait().unwrap();
     drop(wire);
-    assert!(
-        !fixture
-            .config
-            .admission_directory
-            .join("pending")
-            .join(format!("{}.json", fixture.id))
-            .exists()
-    );
+    assert!(!fixture
+        .config
+        .admission_directory
+        .join("pending")
+        .join(format!("{}.json", fixture.id))
+        .exists());
     let (mut wire, worker) = fixture.connect();
     assert!(
         matches!(fixture.call(&mut wire, Request::Reopen { admission: fixture.id.clone() }), Reply::Reopened { registration: observed } if observed == registration)

@@ -2,8 +2,8 @@
 //! process identity, dynamic dependencies, source provenance or worker custody.
 use harbor_llm_protocol::{ErrorCode, ProtocolError};
 use rustix::fs::{
-    MemfdFlags, Mode, OFlags, SealFlags, fchmod, fcntl_add_seals, fcntl_get_seals, memfd_create,
-    open,
+    fchmod, fcntl_add_seals, fcntl_get_seals, memfd_create, open, MemfdFlags, Mode, OFlags,
+    SealFlags,
 };
 use sha2::{Digest, Sha256};
 use std::{

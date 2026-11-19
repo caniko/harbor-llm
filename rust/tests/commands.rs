@@ -1,11 +1,11 @@
 //! Separately versioned command and bounded transfer interoperability.
 use harbor_llm_protocol::{
-    Binding, ErrorCode,
     channel::Role,
     commands::{
         self, AuthenticatedChannel, TransferChunk, TransferPurpose, TransferReceiver,
         TransferReference,
     },
+    Binding, ErrorCode,
 };
 use sha2::{Digest as _, Sha256};
 use std::{

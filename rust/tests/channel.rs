@@ -1,7 +1,7 @@
 //! Rust/JavaScript authenticated channel interoperability and replay rejection.
 use harbor_llm_protocol::{
-    Body, ErrorCode, Failure, Message,
     channel::{AuthenticatedChannel, Role},
+    Body, ErrorCode, Failure, Message,
 };
 use std::process::Command;
 

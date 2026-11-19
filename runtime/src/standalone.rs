@@ -5,16 +5,16 @@
 //! Root invocation is unsupported. The root preparation service remains disabled
 //! for launch until its distinct-writer/admission integration is qualified.
 use crate::{
-    Controller,
     artifact::Snapshot,
     ipc::{Exchange, Limits, Wire},
+    Controller,
 };
 use harbor_llm_protocol::{
-    Binding, ErrorCode, ProtocolError,
     channel::Role,
     commands::{
         self, AuthenticatedChannel, Command, CommandBody, TransferPurpose, TransferReference,
     },
+    Binding, ErrorCode, ProtocolError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -418,11 +418,10 @@ fn bounded_control(command: &mut Process) -> Result<Vec<u8>> {
 #[doc(hidden)]
 pub fn setup() -> Result<()> {
     use rustix::{
-        mount::{MountFlags, mount_remount},
+        mount::{mount_remount, MountFlags},
         thread::{
-            CapabilitiesSecureBits, CapabilitySet, CapabilitySets,
             remove_capability_from_bounding_set, set_capabilities, set_capabilities_secure_bits,
-            set_no_new_privs,
+            set_no_new_privs, CapabilitiesSecureBits, CapabilitySet, CapabilitySets,
         },
     };
     use std::os::unix::process::CommandExt;

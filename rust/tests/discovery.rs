@@ -1,6 +1,6 @@
 //! Transferred Toolbelt discovery tests; the wire and failure contract is unchanged.
 use harbor_llm_protocol::{
-    Body, Capability, ErrorCode, Message, SCHEMA_DIGEST, decode, encode, negotiate,
+    decode, encode, negotiate, Body, Capability, ErrorCode, Message, SCHEMA_DIGEST,
 };
 
 fn fixtures() -> serde_json::Value {

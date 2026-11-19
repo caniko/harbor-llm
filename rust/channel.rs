@@ -3,7 +3,7 @@
 //! Trusted launch supplies a fresh random nonce, secret key and exact binding.
 //! Never reuse the tuple, including after restart. This layer grants no admission
 //! and provides integrity, not confidentiality. I/O deadlines belong to transport.
-use crate::{ErrorCode, Message, ProtocolError, SCHEMA_DIGEST, decode, encode, rejected, schema};
+use crate::{decode, encode, rejected, schema, ErrorCode, Message, ProtocolError, SCHEMA_DIGEST};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use zeroize::Zeroizing;

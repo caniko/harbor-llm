@@ -2,7 +2,7 @@
 #![cfg(target_os = "linux")]
 use harbor_llm_protocol::ErrorCode;
 use harbor_llm_runtime::artifact::Snapshot;
-use rustix::fs::{SealFlags, fcntl_get_seals};
+use rustix::fs::{fcntl_get_seals, SealFlags};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -51,11 +51,9 @@ fn source_replacement_and_in_place_changes_cannot_change_the_sealed_snapshot() {
     assert!(fcntl_get_seals(&snapshot).unwrap().contains(
         SealFlags::WRITE | SealFlags::GROW | SealFlags::SHRINK | SealFlags::SEAL | SealFlags::EXEC
     ));
-    assert!(
-        rustix::io::fcntl_getfd(&snapshot)
-            .unwrap()
-            .contains(rustix::io::FdFlags::CLOEXEC)
-    );
+    assert!(rustix::io::fcntl_getfd(&snapshot)
+        .unwrap()
+        .contains(rustix::io::FdFlags::CLOEXEC));
     // Write permission alone cannot bypass F_SEAL_WRITE, while F_SEAL_EXEC
     // protects the executable bits rather than all chmod permission changes.
     rustix::fs::fchmod(

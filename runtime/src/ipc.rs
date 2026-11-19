@@ -2,8 +2,8 @@
 //! original socket, peer/executable custody and fresh authenticated channel.
 //! This module never connects, launches, reconnects, retries or grants admission.
 use harbor_llm_protocol::{
-    Binding, ErrorCode, ProtocolError,
     commands::{self, AuthenticatedChannel, Command, CommandBody},
+    Binding, ErrorCode, ProtocolError,
 };
 use std::{
     io::{ErrorKind, Read, Write},

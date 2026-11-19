@@ -1,8 +1,8 @@
 //! Real private sockets exercise whole-channel bounds and terminal no-retry I/O.
 use harbor_llm_protocol::{
-    Binding, ErrorCode, OutputReceipt,
     channel::Role,
     commands::{self, AuthenticatedChannel, Command, CommandBody},
+    Binding, ErrorCode, OutputReceipt,
 };
 use harbor_llm_runtime::ipc::{Exchange, Limits};
 use sha2::{Digest, Sha256};

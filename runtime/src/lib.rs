@@ -22,8 +22,8 @@ use fs2::FileExt;
 use harbor_llm_protocol::commands::{
     self, CommandBody, Effect, EffectReceipt, EffectState, TransferPurpose,
 };
-use harbor_llm_protocol::{Binding, Body, ErrorCode, Message, OutputReceipt, encode};
-use rustix::fs::{Mode, OFlags, open};
+use harbor_llm_protocol::{encode, Binding, Body, ErrorCode, Message, OutputReceipt};
+use rustix::fs::{open, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
