@@ -4,7 +4,7 @@
 // files, and the first other call (a read, a command) checks them, so errors a
 // later edit fixes are never reported. Clean files pass silently; errors deny
 // that one call with the report. Checked files are forgotten either way, so
-// the agent is never held. Any failure allows the call: Antigravity treats
+// the agent is never held. Any failure passes the call: Antigravity treats
 // a failing hook as a denial. The package build substitutes @cli@ (via
 // server.js) and places upstream/ beside this file.
 import { execFile } from "node:child_process";
@@ -29,6 +29,11 @@ import { LspManager, insideProject } from "./upstream/src/manager.ts";
 
 // Below the 90 s handler timeout in the hooks.json this ships with.
 const BUDGET_MS = 75_000;
+// Antigravity requires a decision and denies a reply without one. "ask" leaves
+// the call to the session's permission mode; "allow" would approve it outright.
+// ponytail: sessions outside yolo mode then confirm every call; drop "ask" for
+// a no-opinion decision if Antigravity adds one.
+const PASS = { decision: "ask" };
 // ponytail: edit tools by name; extend when Antigravity renames or adds one.
 const EDIT_TOOL = /write|replace|edit|create|patch/i;
 const PATH_ARG = /file|path/i;
@@ -100,7 +105,8 @@ export async function check(root, files) {
 }
 
 async function main(input) {
-  const root = process.cwd();
+  // Hooks run in the hooks.json folder; `cwd` is the agent's directory.
+  const root = input.cwd || process.cwd();
   const base = path.join(tmpdir(), "harbor-lsp-antigravity");
   const state = path.join(
     base,
@@ -118,7 +124,7 @@ async function main(input) {
     const record = path.join(base, `.${unique}`);
     await writeFile(record, JSON.stringify(edited));
     await rename(record, path.join(state, unique));
-    return {};
+    return PASS;
   }
   // Claim each record by renaming it away, so a concurrent check takes it at
   // most once and one published meanwhile waits for the next check. Claimed
@@ -136,23 +142,23 @@ async function main(input) {
     files.push(...JSON.parse(await readFile(claimed, "utf8")));
     await rm(claimed, { force: true });
   }
-  if (!files.length) return {};
+  if (!files.length) return PASS;
   const report = await check(root, [...new Set(files)]);
-  return report ? { decision: "deny", reason: report } : {};
+  return report ? { decision: "deny", reason: report } : PASS;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // Exit once the reply is flushed: a cut-off reply is invalid JSON, which denies.
   const done = (result) =>
     process.stdout.write(JSON.stringify(result), () => process.exit(0));
-  setTimeout(() => done({}), BUDGET_MS).unref();
+  setTimeout(() => done(PASS), BUDGET_MS).unref();
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   main(JSON.parse(Buffer.concat(chunks).toString() || "{}")).then(
     done,
     (error) => {
       console.error(`harbor-lsp antigravity hook: ${error.message}`);
-      done({});
+      done(PASS);
     },
   );
 }
