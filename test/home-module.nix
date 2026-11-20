@@ -162,7 +162,8 @@ in
       ' ${disabled.programs.harborLlm.lsp.opencodePlugin} $PWD/project ${./fake-lsp.mjs}
 
       # Antigravity hook: edits are recorded, the next other call reports the
-      # red file once, and clean files stay silent.
+      # red file once, and clean files pass with a decision (none denies).
+      pass='{"decision":"ask"}'
       hooks=${disabled.programs.harborLlm.lsp.antigravityHooks}
       command=$(jq -er '.["harbor-lsp"].PreToolUse[0].hooks[0].command' $hooks)
       mkdir -p red/.opencode
@@ -170,20 +171,24 @@ in
       echo BAD > red/a.x
       echo ok > red/b.x
       hook() { (cd red && echo "{\"toolCall\":$1,\"conversationId\":\"c\"}" | HOME=$PWD $command); }
-      [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"a.x"}}')" = "{}" ]
-      [ "$(hook '{"name":"replace_file_content","args":{"TargetFile":"b.x"}}')" = "{}" ]
+      [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"a.x"}}')" = "$pass" ]
+      [ "$(hook '{"name":"replace_file_content","args":{"TargetFile":"b.x"}}')" = "$pass" ]
       hook '{"name":"run_command","args":{}}' | jq -e '.decision == "deny" and (.reason | contains("a.x") and contains("BAD is not allowed") and (contains("b.x") | not))'
-      [ "$(hook '{"name":"run_command","args":{}}')" = "{}" ]
-      [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"b.x"}}')" = "{}" ]
-      [ "$(hook '{"name":"view_file","args":{"AbsolutePath":"b.x"}}')" = "{}" ]
+      [ "$(hook '{"name":"run_command","args":{}}')" = "$pass" ]
+      [ "$(hook '{"name":"write_to_file","args":{"TargetFile":"b.x"}}')" = "$pass" ]
+      [ "$(hook '{"name":"view_file","args":{"AbsolutePath":"b.x"}}')" = "$pass" ]
+      # Hooks run in the hooks.json folder, so the root is the agent's `cwd`.
+      wd() { echo "{\"toolCall\":$1,\"conversationId\":\"w\",\"cwd\":\"$PWD/red\"}" | HOME=$PWD $command; }
+      [ "$(wd '{"name":"write_to_file","args":{"TargetFile":"a.x"}}')" = "$pass" ]
+      wd '{"name":"run_command","args":{}}' | jq -e '.decision == "deny" and (.reason | contains("a.x"))'
       # A file whose server cannot start is reported as unchecked.
       mkdir -p gone/.opencode
       echo '{"lsp":{"gone":{"command":["/nonexistent/lsp"],"extensions":[".x"]}}}' > gone/.opencode/opencode.jsonc
       echo ok > gone/c.x
       gonehook() { (cd gone && echo "{\"toolCall\":$1,\"conversationId\":\"g\"}" | HOME=$PWD $command); }
-      [ "$(gonehook '{"name":"write_to_file","args":{"TargetFile":"c.x"}}')" = "{}" ]
+      [ "$(gonehook '{"name":"write_to_file","args":{"TargetFile":"c.x"}}')" = "$pass" ]
       gonehook '{"name":"run_command","args":{}}' | jq -e '.decision == "deny" and (.reason | contains("could not check") and contains("c.x") and (contains("please fix") | not))'
-      [ "$(gonehook '{"name":"run_command","args":{}}')" = "{}" ]
+      [ "$(gonehook '{"name":"run_command","args":{}}')" = "$pass" ]
       # Edit hooks running beside each other and beside a check lose no file.
       for i in 1 2 3 4 5 6 7 8; do echo BAD > red/p$i.x; done
       for round in 1 2 3 4 5; do
