@@ -38,11 +38,20 @@ Return only this JSON, with no prose before or after:
   "partition": "string",
   "groups": ["string"],
   "rows": 0,
-  "type_distribution": {"type": 0},
-  "naming": {"pattern": "string", "consistency": "string", "exceptions": ["string"]},
+  "type_distribution": { "type": 0 },
+  "naming": {
+    "pattern": "string",
+    "consistency": "string",
+    "exceptions": ["string"]
+  },
   "description_conventions": "string",
   "samples": [
-    {"path": "string", "manifest_type": "string", "observed": "one sentence", "matches_manifest": true}
+    {
+      "path": "string",
+      "manifest_type": "string",
+      "observed": "one sentence",
+      "matches_manifest": true
+    }
   ],
   "themes": ["string"],
   "anomalies": ["string"],

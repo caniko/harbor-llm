@@ -1,5 +1,7 @@
 # Changelog
+
 ## [Unreleased]
+
 - Add the Harbor LSP bridge: `harbor-llm-lsp list|serve` resolves a project's
   Harbor LSP map (committed `.opencode/opencode.jsonc` plus the devshell's
   `OPENCODE_CONFIG_CONTENT`) and runs its servers in the project environment.
